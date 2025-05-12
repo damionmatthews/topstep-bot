@@ -6,7 +6,7 @@ services:
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
     envVars:
-      - key: TOPSTEP_API_KEY
+      - key: hUcaJ5J88F92wlp2J0byZPRicRQwrW5EtPTNSkfZSac=
         sync: false
-      - key: ACCOUNT_ID
+      - key: 305
         sync: false
