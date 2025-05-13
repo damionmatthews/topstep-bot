@@ -1,4 +1,6 @@
 # main.py (Top section additions)
+import sys
+import os
 import os
 import httpx
 import asyncio
