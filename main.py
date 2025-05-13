@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 load_dotenv()  # Load from .env file for local development
 
 # --- Configuration ---
-TOPSTEP_USERNAME = os.getenv("TOPSTEP_USERNAME")
-TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
-ACCOUNT_ID_STR = os.getenv("ACCOUNT_ID")
+TOPSTEP_USERNAME = "dcminsf"
+TOPSTEP_API_KEY = "hUcaJ5J88F92wlp2J0byZPRicRQwrW5EtPTNSkfZSac="
+ACCOUNT_ID_STR = "305"
 BASE_URL = "https://gateway-api-demo.s2f.projectx.com" # IMPORTANT: Use production URL eventually
 
 # Trading Parameters (Load from Env or keep defaults)
