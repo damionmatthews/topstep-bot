@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "ls -l /opt/render/project/src/.venv/lib/python3.11/site-packages/ | grep signalr && echo '--- Starting Uvicorn ---' && uvicorn main:app --host 0.0.0.0 --port 10000"
+    startCommand: "python check_import.py && echo '--- Import Check OK, Starting Uvicorn ---' && uvicorn main:app --host 0.0.0.0 --port 10000 || echo '--- Import Check FAILED ---'"
     envVars:
       - key: hUcaJ5J88F92wlp2J0byZPRicRQwrW5EtPTNSkfZSac=
         sync: false
