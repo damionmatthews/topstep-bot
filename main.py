@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import logging
-import signal # For graceful shutdown handling
+import signal 
 
 # SignalR specific import
 from signalrcore.asyncio.hub_connection_builder import HubConnectionBuilder
@@ -55,6 +55,23 @@ try:
 except ValueError:
     logger.error(f"Invalid ACCOUNT_ID: '{ACCOUNT_ID_STR}'. Must be an integer.")
     exit(1)
+
+    # --- Diagnostic Check ---
+try:
+    import signalrcore
+    logger.info(f"Successfully imported 'signalrcore'. Location: {signalrcore.__file__}")
+    # Now try the specific import
+    from signalrcore.asyncio.hub_connection_builder import HubConnectionBuilder
+    logger.info("Successfully imported HubConnectionBuilder.")
+except ImportError as e:
+    logger.exception(f"ImportError encountered: {e}")
+    # Also log the sys.path to see where Python is looking
+    import sys
+    logger.error(f"Python sys.path: {sys.path}")
+    raise # Re-raise the exception to stop the app as before
+except Exception as e:
+     logger.exception(f"Non-ImportError during signalrcore import attempt: {e}")
+     raise
 
 # --- Global State ---
 # WARNING: In-memory state is lost on server restart. Consider Redis or DB for persistence.
@@ -516,3 +533,4 @@ if __name__ == "__main__":
     # Running programmatically might require manual trigger or different setup if needed before server starts accepting requests.
     # However, FastAPI's @app.on_event("startup") should handle this correctly.
     uvicorn.run(app, host="0.0.0.0", port=8000) # Use port 8000 for local dev typically
+
