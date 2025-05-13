@@ -5,3 +5,8 @@ services:
     plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    envVars:
+      - key: TOPSTEP_API_KEY
+        value: 4s/YUAhW2bXdG/TyNL4v4vd3kybtMGVLAx+mX4D0iXU=
+      - key: ACCOUNT_ID
+        value: "473"
