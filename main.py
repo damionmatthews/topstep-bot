@@ -1,4 +1,4 @@
-# main.py
+# main.py (Top section additions)
 import os
 import httpx
 import asyncio
@@ -7,6 +7,11 @@ from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import logging
+import signal # For graceful shutdown handling
+
+# SignalR specific import
+from signalrcore.asyncio.hub_connection_builder import HubConnectionBuilder
+from signalrcore.protocol.messagepack_protocol import MessagePackHubProtocol # Optional: If API uses MessagePack
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,6 +25,9 @@ TOPSTEP_USERNAME = "dcminsf"
 TOPSTEP_API_KEY = "hUcaJ5J88F92wlp2J0byZPRicRQwrW5EtPTNSkfZSac="
 ACCOUNT_ID_STR = "305"
 BASE_URL = "https://gateway-api-demo.s2f.projectx.com" # IMPORTANT: Use production URL eventually
+
+USER_HUB_URL = "wss://gateway-rtc-demo.s2f.projectx.com/hubs/user" # Use wss:// for secure websockets
+# TODO: Replace USER_HUB_URL with the production URL when ready (likely rtc.topstepx.com)
 
 # Trading Parameters (Load from Env or keep defaults)
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS", -1200))
@@ -69,6 +77,9 @@ daily_state = {
     "pnl": 0.0,
     "trading_allowed": True
 }
+
+hub_connection = None
+signalr_task = None
 
 # --- Pydantic Models ---
 class SignalAlert(BaseModel):

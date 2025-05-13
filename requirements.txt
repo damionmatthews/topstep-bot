@@ -1,4 +1,6 @@
+# requirements.txt
 fastapi
 uvicorn
 httpx
 python-dotenv
+signalrcore-async
