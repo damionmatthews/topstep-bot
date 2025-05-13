@@ -20,7 +20,7 @@ load_dotenv()
 TOPSTEP_USERNAME = os.getenv("TOPSTEP_USERNAME")
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
 ACCOUNT_ID_STR = os.getenv("ACCOUNT_ID")
-BASE_URL = "https://gateway-api-demo.s2f.projectx.com" # IMPORTANT: Use production URL eventually
+BASE_URL = "https://gateway-api.projectx.com/api/Auth/loginKey"
 
 # Trading Parameters
 MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS", -1200))
