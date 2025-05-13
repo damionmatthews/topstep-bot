@@ -4,9 +4,10 @@ services:
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "uvicorn main:app --host 0.0.0.0 --port 10000"
+    startCommand: "ls -l /opt/render/project/src/.venv/lib/python3.11/site-packages/ | grep signalr && echo '--- Starting Uvicorn ---' && uvicorn main:app --host 0.0.0.0 --port 10000"
     envVars:
       - key: hUcaJ5J88F92wlp2J0byZPRicRQwrW5EtPTNSkfZSac=
         sync: false
       - key: 305
         sync: false
+
