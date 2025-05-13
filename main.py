@@ -6,8 +6,6 @@ from datetime import datetime, timedelta
 import httpx
 import os
 
-app = FastAPI()
-
 # --- ENVIRONMENT CONFIG ---
 TOPSTEP_API_KEY = os.getenv("hUcaJ5J88F92wlp2J0byZPRicRQwrW5EtPTNSkfZSac=")
 ACCOUNT_ID = os.getenv("305")  # Your ProjectX account ID
