@@ -323,44 +323,6 @@ async def close_position():
         response.raise_for_status()
         return response.json()
 
-# --- Start SignalR WebSocket connection ---
-def start_market_data_stream(token, contract_id):
-    global market_data_connection
-    if market_data_connection:
-        print("🔁 WebSocket already connected. Skipping restart.")
-        return
-
-    hub_url = f"https://rtc.topstepx.com/hubs/market?access_token={token}"
-    try:
-        connection = HubConnectionBuilder()\
-            .with_url(hub_url)\
-            .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
-            .build()
-
-        def handle_trade(args):
-            print("TRADE:", args)
-            if args:
-                latest_market_data.append({"type": "trade", "data": args})
-                if len(latest_market_data) > 50:
-                    latest_market_data.pop(0)
-
-        def handle_quote(args):
-            print("QUOTE:", args)
-            if args:
-                latest_market_data.append({"type": "quote", "data": args})
-                if len(latest_market_data) > 50:
-                    latest_market_data.pop(0)
-
-        connection.on("GatewayTrade", handle_trade)
-        connection.on("GatewayQuote", handle_quote)
-        connection.start()
-        connection.send("SubscribeContractTrades", [contract_id])
-        connection.send("SubscribeContractQuotes", [contract_id])
-        market_data_connection = connection
-        print("✅ WebSocket connection established and subscribed")
-    except Exception as e:
-        print("❌ WebSocket connection failed:", e)
-        
 # Call on startup
 @app.on_event("startup")
 async def on_startup():
