@@ -19,7 +19,7 @@ shutdown_event = Event()
 def setupSignalRConnection(authToken, contractId):
     global rtc_connection, connection_started
     
-    if not authToken or not contractId:
+if not authToken or not contractId:
     logger.error("[SignalR] Missing authToken or contractId.")
     return
 
