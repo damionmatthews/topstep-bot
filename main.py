@@ -1,10 +1,11 @@
 from fastapi import FastAPI, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime
 import httpx
 import os
 import json
+import csv
 
 app = FastAPI()
 
@@ -785,3 +786,113 @@ async def alert_log_view_page(): # Renamed
         <p><a href="/dashboard_menu_page" class="button-link" style="margin-bottom:20px;">Back to Menu</a></p>
         <table><thead><tr><th>Time (UTC)</th><th>Event</th><th>Strategy</th><th>Signal</th><th>Ticker</th><th>Details/Error</th></tr></thead><tbody>{rows_html}</tbody></table>
     </div></body></html>""")
+
+
+@app.get("/logs/trades", response_class=HTMLResponse)
+async def trade_log_view_page():
+    if os.path.exists(TRADE_LOG_PATH):
+        with open(TRADE_LOG_PATH, "r") as f:
+            try:
+                trades = json.load(f)
+            except json.JSONDecodeError:
+                trades = []
+    else:
+        trades = []
+
+    # Grouped summary per strategy
+    summary_by_strategy = {}
+    for t in trades:
+        if not t.get("event", "").startswith("exit"):
+            continue
+        strat = t.get("strategy", "Unknown")
+        summary = summary_by_strategy.setdefault(strat, {
+            "wins": 0, "losses": 0, "total_pnl": 0, "count": 0,
+            "best": float('-inf'), "worst": float('inf')
+        })
+        pnl = t.get("pnl", 0)
+        summary["wins"] += 1 if pnl > 0 else 0
+        summary["losses"] += 1 if pnl <= 0 else 0
+        summary["total_pnl"] += pnl
+        summary["count"] += 1
+        summary["best"] = max(summary["best"], pnl)
+        summary["worst"] = min(summary["worst"], pnl)
+
+    summary_html = "".join([
+        f"<h3>{s}</h3><ul>"
+        f"<li>Total Trades: {d['count']}</li>"
+        f"<li>Wins: {d['wins']} | Losses: {d['losses']}</li>"
+        f"<li>Total PnL: ${d['total_pnl']:.2f}</li>"
+        f"<li>Average PnL: ${d['total_pnl']/d['count']:.2f}</li>"
+        f"<li>Best: ${d['best']:.2f} | Worst: ${d['worst']:.2f}</li></ul>"
+        for s, d in summary_by_strategy.items()
+    ])
+
+    rows_html = "".join([
+        f"<tr><td>{t.get('timestamp','')}</td><td>{t.get('strategy','')}</td><td>{t.get('ticker','')}</td><td>{t.get('signal','')}</td>"
+        f"<td>{t.get('entry_price_estimate', t.get('entry_price',''))}</td><td>{t.get('exit_price','')}</td><td>{t.get('pnl','')}</td></tr>"
+        for t in reversed(trades)
+    ])
+
+    return HTMLResponse(f"""
+    <html><head><title>Trade History</title>{COMMON_CSS}</head><body><div class='container'>
+    <h1>Trade History</h1>
+    <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
+    <h2>Performance Summary</h2>
+    {summary_html}
+    <h2>Trade Log</h2>
+    <a href='/download/trades.csv' class='button-link'>Download CSV</a>
+    <table><thead><tr><th>Time</th><th>Strategy</th><th>Symbol</th><th>Signal</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead><tbody>{rows_html}</tbody></table>
+    </div></body></html>")
+
+@app.get("/download/trades.csv")
+async def download_trade_log():
+    if not os.path.exists(TRADE_LOG_PATH):
+        return HTMLResponse("Trade log not found", status_code=404)
+
+    with open(TRADE_LOG_PATH, "r") as f:
+        try:
+            trades = json.load(f)
+        except json.JSONDecodeError:
+            trades = []
+
+    def generate():
+        csv_writer = csv.writer(io.StringIO())
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=["timestamp", "strategy", "ticker", "signal", "entry_price_estimate", "exit_price", "pnl"])
+        writer.writeheader()
+        for t in trades:
+            writer.writerow({
+                "timestamp": t.get("timestamp"),
+                "strategy": t.get("strategy"),
+                "ticker": t.get("ticker"),
+                "signal": t.get("signal"),
+                "entry_price_estimate": t.get("entry_price_estimate", t.get("entry_price")),
+                "exit_price": t.get("exit_price"),
+                "pnl": t.get("pnl")
+            })
+        yield output.getvalue()
+
+    return StreamingResponse(generate(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=trades.csv"})
+
+@app.get("/logs/alerts", response_class=HTMLResponse)
+async def alert_log_view_page():
+    if os.path.exists(ALERT_LOG_PATH):
+        with open(ALERT_LOG_PATH, "r") as f:
+            try:
+                alerts = json.load(f)
+            except json.JSONDecodeError:
+                alerts = []
+    else:
+        alerts = []
+
+    rows_html = "".join([
+        f"<tr><td>{a.get('timestamp','')}</td><td>{a.get('strategy','')}</td><td>{a.get('signal','')}</td><td>{a.get('ticker','')}</td><td>{a.get('event','')}</td><td>{a.get('error',a.get('detail',''))}</td></tr>"
+        for a in reversed(alerts)
+    ])
+
+    return HTMLResponse(f"""
+    <html><head><title>Alert History</title>{COMMON_CSS}</head><body><div class='container'>
+    <h1>Alert History</h1>
+    <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
+    <table><thead><tr><th>Time</th><th>Strategy</th><th>Signal</th><th>Ticker</th><th>Event</th><th>Error</th></tr></thead><tbody>{rows_html}</tbody></table>
+    </div></body></html>")
