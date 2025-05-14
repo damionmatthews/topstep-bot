@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import httpx
 import os
+import json
 
 app = FastAPI()
 
@@ -14,15 +15,29 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
 ACCOUNT_ID = os.getenv("ACCOUNT_ID")
 
-# Default config values (editable via UI)
-config = {
-    "MAX_DAILY_LOSS": -1200,
-    "MAX_DAILY_PROFIT": 2000,
-    "MAX_TRADE_LOSS": -350,
-    "MAX_TRADE_PROFIT": 450,
-    "CONTRACT_SYMBOL": "NQ",
-    "TRADE_SIZE": 1
-}
+# Strategy storage path
+STRATEGY_PATH = "strategies.json"
+
+# Load or initialize strategies
+if os.path.exists(STRATEGY_PATH):
+    with open(STRATEGY_PATH, "r") as f:
+        strategies = json.load(f)
+else:
+    strategies = {
+        "default": {
+            "MAX_DAILY_LOSS": -1200,
+            "MAX_DAILY_PROFIT": 2000,
+            "MAX_TRADE_LOSS": -350,
+            "MAX_TRADE_PROFIT": 450,
+            "CONTRACT_SYMBOL": "NQ",
+            "TRADE_SIZE": 1
+        }
+    }
+    with open(STRATEGY_PATH, "w") as f:
+        json.dump(strategies, f, indent=2)
+
+current_strategy = "default"
+config = strategies[current_strategy]
 
 daily_pnl = 0.0
 trade_active = False
@@ -44,6 +59,10 @@ class StatusResponse(BaseModel):
     daily_pnl: float
 
 # --- HELPER FUNCTIONS ---
+def save_strategies():
+    with open(STRATEGY_PATH, "w") as f:
+        json.dump(strategies, f, indent=2)
+
 async def place_order(direction: str):
     side = "buy" if direction == "long" else "sell"
     async with httpx.AsyncClient() as client:
@@ -138,18 +157,21 @@ async def get_status():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
+    strategy_options = "".join([f'<option value="{name}" {"selected" if name == current_strategy else ""}>{name}</option>' for name in strategies])
+    current = strategies[current_strategy]
     html_content = f"""
     <html>
     <head><title>Trading Bot Dashboard</title></head>
     <body>
         <h1>Topstep Bot Dashboard</h1>
         <form action="/config" method="post">
-            <label>Contract Symbol: <input name="symbol" value="{config['CONTRACT_SYMBOL']}" /></label><br>
-            <label>Trade Size: <input name="size" type="number" value="{config['TRADE_SIZE']}" /></label><br>
-            <label>Max Trade Loss: <input name="max_trade_loss" type="number" value="{config['MAX_TRADE_LOSS']}" /></label><br>
-            <label>Max Trade Profit: <input name="max_trade_profit" type="number" value="{config['MAX_TRADE_PROFIT']}" /></label><br>
-            <label>Max Daily Loss: <input name="max_daily_loss" type="number" value="{config['MAX_DAILY_LOSS']}" /></label><br>
-            <label>Max Daily Profit: <input name="max_daily_profit" type="number" value="{config['MAX_DAILY_PROFIT']}" /></label><br>
+            <label>Strategy: <select name="strategy">{strategy_options}</select></label><br>
+            <label>Contract Symbol: <input name="symbol" value="{current['CONTRACT_SYMBOL']}" /></label><br>
+            <label>Trade Size: <input name="size" type="number" value="{current['TRADE_SIZE']}" /></label><br>
+            <label>Max Trade Loss: <input name="max_trade_loss" type="number" value="{current['MAX_TRADE_LOSS']}" /></label><br>
+            <label>Max Trade Profit: <input name="max_trade_profit" type="number" value="{current['MAX_TRADE_PROFIT']}" /></label><br>
+            <label>Max Daily Loss: <input name="max_daily_loss" type="number" value="{current['MAX_DAILY_LOSS']}" /></label><br>
+            <label>Max Daily Profit: <input name="max_daily_profit" type="number" value="{current['MAX_DAILY_PROFIT']}" /></label><br>
             <button type="submit">Update Config</button>
         </form>
         <hr>
@@ -165,6 +187,7 @@ async def dashboard():
 
 @app.post("/config")
 async def update_config(
+    strategy: str = Form(...),
     symbol: str = Form(...),
     size: int = Form(...),
     max_trade_loss: float = Form(...),
@@ -172,10 +195,18 @@ async def update_config(
     max_daily_loss: float = Form(...),
     max_daily_profit: float = Form(...)
 ):
-    config["CONTRACT_SYMBOL"] = symbol
-    config["TRADE_SIZE"] = size
-    config["MAX_TRADE_LOSS"] = max_trade_loss
-    config["MAX_TRADE_PROFIT"] = max_trade_profit
-    config["MAX_DAILY_LOSS"] = max_daily_loss
-    config["MAX_DAILY_PROFIT"] = max_daily_profit
+    global config, current_strategy
+    if strategy not in strategies:
+        strategies[strategy] = {}
+    strategies[strategy].update({
+        "CONTRACT_SYMBOL": symbol,
+        "TRADE_SIZE": size,
+        "MAX_TRADE_LOSS": max_trade_loss,
+        "MAX_TRADE_PROFIT": max_trade_profit,
+        "MAX_DAILY_LOSS": max_daily_loss,
+        "MAX_DAILY_PROFIT": max_daily_profit
+    })
+    save_strategies()
+    current_strategy = strategy
+    config = strategies[current_strategy]
     return RedirectResponse(url="/", status_code=303)
