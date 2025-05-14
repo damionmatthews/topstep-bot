@@ -53,7 +53,7 @@ async def login_to_projectx():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
-                "https://gateway-api-demo.s2f.projectx.com/api",
+                "https://gateway-api-demo.s2f.projectx.com/api/Auth",
                 json={"key": TOPSTEP_API_KEY}
             )
             response.raise_for_status()
