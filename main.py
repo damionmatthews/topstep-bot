@@ -203,8 +203,8 @@ async def status():
 # --- DATA MODEL ---
 class SignalAlert(BaseModel):
     signal: str
-    ticker: str
-    time: str
+    ticker: Optional[str] = "NQ"
+    time: Optional[str] = None
 
 class StatusResponse(BaseModel):
     trade_active: bool
