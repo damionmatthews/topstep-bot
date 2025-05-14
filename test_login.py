@@ -11,7 +11,7 @@ load_dotenv()
 # --- Copy necessary global variables from main.py ---
 PROJECTX_USERNAME = os.getenv("PROJECTX_USERNAME")
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
-PROJECTX_BASE_URL = "https://gateway-api.s2f.projectx.com/api"
+PROJECTX_BASE_URL = "https://gateway-rtc.s2f.projectx.com/api"
 
 projectx_session_token = None # To store the token
 
