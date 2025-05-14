@@ -21,6 +21,11 @@ SESSION_TOKEN = None
 
 # Strategy storage path
 STRATEGY_PATH = "strategies.json"
+STRATEGIES_FILE_PATH = "strategies.json"  # Or wherever your strategies are stored
+def save_strategies_to_file():
+    with open(STRATEGIES_FILE_PATH, "w") as f:
+        json.dump(strategies, f, indent=2)
+        
 TRADE_LOG_PATH = "trade_log.json"
 ALERT_LOG_PATH = "alert_log.json"
 
