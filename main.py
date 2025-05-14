@@ -44,6 +44,7 @@ trade_active = False
 entry_price = None
 trade_time = None
 current_signal = None
+current_signal_direction = None
 
 # --- AUTHENTICATION ---
 async def login_to_projectx():
