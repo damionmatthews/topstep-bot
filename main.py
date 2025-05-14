@@ -407,20 +407,24 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
 # --- ORDER FUNCTIONS ---
 async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
     payload = {
-    "accountId": int(ACCOUNT_ID),
-    "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
-    "type": 2,
-    "side": 0 if signal_direction == "long" else 1,
-    "size": strategy_cfg["TRADE_SIZE"]
-}
+        "accountId": int(ACCOUNT_ID),
+        "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
+        "type": 2,
+        "side": 0 if signal_direction == "long" else 1,
+        "size": strategy_cfg["TRADE_SIZE"]
+    }
+
     result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
-if not result:
-    raise ValueError("No response received from ProjectX order placement.")
-order_id = result.get("orderId")
-if not order_id:
-    raise ValueError(f"Order placement failed, response: {result}")
-logger.info(f"Order placed with ID: {order_id}")
-return {"success": True, "orderId": order_id}
+    if not result:
+        raise ValueError("No response received from ProjectX order placement.")
+
+    order_id = result.get("orderId")
+    if not order_id:
+        raise ValueError(f"Order placement failed, response: {result}")
+
+    logger.info(f"Order placed with ID: {order_id}")
+    return {"success": True, "orderId": order_id}
+
 async def poll_order_fill(order_id: int):
     max_attempts = 10
     delay = 2
