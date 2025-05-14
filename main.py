@@ -41,13 +41,14 @@ else:
 
 current_strategy_name = "default"
 active_strategy_config = strategies[current_strategy_name]
-
 daily_pnl = 0.0
 trade_active = False
 entry_price = None
 trade_time = None
 current_signal = None
 current_signal_direction = None
+market_data_connection = None
+latest_market_data = []
 
 # --- AUTHENTICATION ---
 async def login_to_projectx():
@@ -219,6 +220,11 @@ async def close_position():
 
 # --- Start SignalR WebSocket connection ---
 def start_market_data_stream(token, contract_id):
+    global market_data_connection
+    if market_data_connection:
+        print("🔁 WebSocket already connected. Skipping restart.")
+        return
+
     hub_url = f"https://rtc.topstepx.com/hubs/market?access_token={token}"
     try:
         connection = HubConnectionBuilder()\
@@ -228,27 +234,34 @@ def start_market_data_stream(token, contract_id):
 
         def handle_trade(args):
             print("TRADE:", args)
+            if args:
+                latest_market_data.append({"type": "trade", "data": args})
+                if len(latest_market_data) > 50:
+                    latest_market_data.pop(0)
 
         def handle_quote(args):
             print("QUOTE:", args)
+            if args:
+                latest_market_data.append({"type": "quote", "data": args})
+                if len(latest_market_data) > 50:
+                    latest_market_data.pop(0)
 
         connection.on("GatewayTrade", handle_trade)
         connection.on("GatewayQuote", handle_quote)
         connection.start()
         connection.send("SubscribeContractTrades", [contract_id])
         connection.send("SubscribeContractQuotes", [contract_id])
+        market_data_connection = connection
         print("✅ WebSocket connection established and subscribed")
-        return connection
     except Exception as e:
         print("❌ WebSocket connection failed:", e)
-        return None
         
 # Call on startup
 @app.on_event("startup")
 async def on_startup():
     await get_projectx_token()
     if SESSION_TOKEN:
-        start_market_data_stream(SESSION_TOKEN, "CON.F.US.EP.M25")  # Replace with actual contract ID
+        start_market_data_stream(SESSION_TOKEN, "CON.F.US.EP.M25")  # Replace with valid contract ID
     else:
         print("⚠️ Cannot start WebSocket: SESSION_TOKEN is missing")
         
@@ -524,6 +537,18 @@ async def check_trade_status_endpoint():
     else:
         return {"status": "checked_trade_closed_or_halted"}
 
+@app.get("/live_feed", response_class=HTMLResponse)
+async def live_feed_page():
+    rows = "".join([
+        f"<tr><td>{item['type']}</td><td>{json.dumps(item['data'])}</td></tr>"
+        for item in reversed(latest_market_data[-50:])
+    ])
+    return HTMLResponse(f"""
+    <html><head><title>Live Market Feed</title>{COMMON_CSS}</head><body><div class='container'>
+    <h1>Live Market Feed (latest 50 events)</h1>
+    <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
+    <table><thead><tr><th>Type</th><th>Data</th></tr></thead><tbody>{rows}</tbody></table>
+    </div></body></html>""")
 
 @app.get("/status", response_model=StatusResponse)
 async def get_status_endpoint(): # Renamed
