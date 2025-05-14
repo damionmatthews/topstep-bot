@@ -7,11 +7,10 @@ import httpx
 import os
 import json
 import csv
-from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data
+from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data, HubConnectionBuilder
 import logging
 import os
 import asyncio
-from signalr_async.netcore.hub_connection_builder import HubConnectionBuilder
 
 app = FastAPI()
 
