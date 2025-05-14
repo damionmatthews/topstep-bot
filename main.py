@@ -36,8 +36,8 @@ else:
     with open(STRATEGY_PATH, "w") as f:
         json.dump(strategies, f, indent=2)
 
-current_strategy = "default"
-config = strategies[current_strategy]
+current_strategy_name = "default"
+active_strategy_config = strategies[current_strategy_name]
 
 daily_pnl = 0.0
 trade_active = False
