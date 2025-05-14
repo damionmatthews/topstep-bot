@@ -137,11 +137,18 @@ async def stop_market_data_stream():
 async def startup_event():
     await ensure_token()
     await start_market_data_stream()
-    await get_projectx_token()
 
 @app.on_event("shutdown")
 async def shutdown_event():
     await stop_market_data_stream()
+
+@app.get("/status")
+async def status():
+    return {
+        "latest_quote": fetch_latest_quote(),
+        "latest_trade": fetch_latest_trade(),
+        "latest_depth": fetch_latest_depth()
+    }
 
 # --- DATA MODEL ---
 class SignalAlert(BaseModel):
