@@ -90,7 +90,7 @@ async def start_market_data_stream():
         await login_to_projectx()
 
     token = SESSION_TOKEN
-    contract_id = os.getenv("PROJECTX_CONTRACT_ID")
+    contract_id = os.getenv("PROJECTX_CONTRACT_ID") or "CON.F.US.EP.M25"
 
     if not token:
         logger.error("❌ No valid SESSION_TOKEN found. Aborting WebSocket connection.")
