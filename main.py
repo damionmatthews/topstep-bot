@@ -11,12 +11,42 @@ app = FastAPI()
 # --- ENVIRONMENT CONFIG ---
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
 ACCOUNT_ID = os.getenv("ACCOUNT_ID")
-PROJECTX_USERNAME = os.getenv("PROJECTX_USERNAME", "default_user") # Add your ProjectX username to env
+SESSION_TOKEN = None
 
-# --- GLOBAL STATE & PATHS ---
+# Strategy storage path
 STRATEGY_PATH = "strategies.json"
-TRADE_LOG_PATH = "trades.json"
-ALERT_LOG_PATH = "alerts.json"
+TRADE_LOG_PATH = "trade_log.json"
+ALERT_LOG_PATH = "alert_log.json"
+
+# Load or initialize strategies
+if os.path.exists(STRATEGY_PATH):
+    with open(STRATEGY_PATH, "r") as f:
+        strategies = json.load(f)
+else:
+    strategies = {
+        "default": {
+            "MAX_DAILY_LOSS": -1200,
+            "MAX_DAILY_PROFIT": 2000,
+            "MAX_TRADE_LOSS": -350,
+            "MAX_TRADE_PROFIT": 450,
+            "CONTRACT_SYMBOL": "NQ",
+            "TRADE_SIZE": 1
+        }
+    }
+    with open(STRATEGY_PATH, "w") as f:
+        json.dump(strategies, f, indent=2)
+
+current_strategy = "default"
+config = strategies[current_strategy]
+
+daily_pnl = 0.0
+trade_active = False
+entry_price = None
+trade_time = None
+current_signal = None
+
+
+
 
 # Initialize log files if they don't exist
 for path in [STRATEGY_PATH, TRADE_LOG_PATH, ALERT_LOG_PATH]:
@@ -38,55 +68,42 @@ for path in [STRATEGY_PATH, TRADE_LOG_PATH, ALERT_LOG_PATH]:
             else:
                 json.dump([], f, indent=2) # Initialize log files as empty lists
 
+# --- AUTHENTICATION ---
+async def login_to_projectx():
+    global SESSION_TOKEN
+    print("Attempting to log in to ProjectX...")
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                "https://gateway-api.projectx.com/api/Auth/loginKey",
+                json={"key": TOPSTEP_API_KEY}
+            )
+            response.raise_for_status()
+            SESSION_TOKEN = response.json().get("token")
+            if SESSION_TOKEN:
+                print("ProjectX Login successful")
+            else:
+                print("ProjectX Login failed: No token received")
+        except Exception as e:
+            print(f"ProjectX Login failed: {e}")
+            SESSION_TOKEN = None
 
-# Load strategies
-with open(STRATEGY_PATH, "r") as f:
-    strategies = json.load(f)
+async def ensure_token():
+    if not SESSION_TOKEN:
+        await login_to_projectx()
 
-current_strategy_name = "default" # Renamed to avoid confusion with 'config' object
-# Ensure 'default' strategy exists, if not, create a basic one
-if "default" not in strategies:
-    strategies["default"] = {
-        "MAX_DAILY_LOSS": -1200.0, "MAX_DAILY_PROFIT": 2000.0,
-        "MAX_TRADE_LOSS": -350.0, "MAX_TRADE_PROFIT": 450.0,
-        "CONTRACT_SYMBOL": "NQ", "TRADE_SIZE": 1,
-        "PROJECTX_CONTRACT_ID": "CON.F.US.MNQ.H25" # Placeholder
-    }
-    # Save immediately if default was missing
-    with open(STRATEGY_PATH, "w") as f:
-        json.dump(strategies, f, indent=2)
-
-
-active_strategy_config = strategies[current_strategy_name] # Config for the currently selected strategy for webhook
-
-# Runtime state (consider moving to a more robust per-strategy state if needed)
-# For now, these will reflect the state of the *last triggered strategy's trade*
-daily_pnl = 0.0 # This should ideally be per-strategy as well
-trade_active = False
-entry_price = None
-trade_time = None
-current_signal_direction = None # 'long' or 'short'
-current_trade_id = None # To track the ProjectX orderId
-
-# --- ProjectX API Session Token ---
-PROJECTX_BASE_URL = "https://gateway-api-demo.s2f.projectx.com/api"
-projectx_session_token = None # To store the token
-
-# --- DATA MODELS ---
+# --- DATA MODEL ---
 class SignalAlert(BaseModel):
-    signal: str # 'long' or 'short'
-    ticker: str # e.g., "NQ"
-    time: str   # ISO format time string
+    signal: str
+    ticker: str
+    time: str
 
 class StatusResponse(BaseModel):
     trade_active: bool
     entry_price: float | None
     trade_time: str | None
-    current_signal_direction: str | None
+    current_signal: str | None
     daily_pnl: float
-    current_strategy_name: str
-    active_strategy_config: dict
-
 
 # --- COMMON CSS ---
 COMMON_CSS = """
@@ -139,7 +156,7 @@ COMMON_CSS = """
 """
 
 # --- HELPER FUNCTIONS ---
-def save_strategies_to_file(): # Renamed to be more explicit
+def save_strategies():
     with open(STRATEGY_PATH, "w") as f:
         json.dump(strategies, f, indent=2)
 
@@ -157,6 +174,58 @@ def log_event(file_path, event_data):
         f.seek(0)
         json.dump(log_list, f, indent=2)
         f.truncate()
+
+async def place_order(direction: str):
+    await ensure_token()
+    side = "buy" if direction == "long" else "sell"
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://gateway-api.projectx.com/api/orders",
+            headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
+            json={
+                "accountId": ACCOUNT_ID,
+                "symbol": config["CONTRACT_SYMBOL"],
+                "qty": config["TRADE_SIZE"],
+                "side": side,
+                "type": "market"
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
+async def check_and_close_trade(current_price: float):
+    global trade_active, entry_price, daily_pnl, current_signal
+    if not trade_active or entry_price is None:
+        return
+
+    pnl = (current_price - entry_price) * (1 if current_signal == 'long' else -1) * 20
+    if pnl >= config["MAX_TRADE_PROFIT"] or pnl <= config["MAX_TRADE_LOSS"]:
+        await close_position()
+        daily_pnl += pnl
+        trade_active = False
+        print(f"Trade exited at {current_price}, PnL: {pnl}")
+
+    if daily_pnl >= config["MAX_DAILY_PROFIT"] or daily_pnl <= config["MAX_DAILY_LOSS"]:
+        trade_active = False
+        print("Trading halted for the day")
+
+async def close_position():
+    await ensure_token()
+    side = "sell" if current_signal == "long" else "buy"
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://gateway-api.projectx.com/api/orders",
+            headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
+            json={
+                "accountId": ACCOUNT_ID,
+                "symbol": config["CONTRACT_SYMBOL"],
+                "qty": config["TRADE_SIZE"],
+                "side": side,
+                "type": "market"
+            }
+        )
+        response.raise_for_status()
+        return response.json()
 
 async def get_projectx_token():
     global projectx_session_token
@@ -198,7 +267,6 @@ async def startup_event():
     #     if "CONTRACT_SYMBOL" in strat_config and "PROJECTX_CONTRACT_ID" not in strat_config:
     #         # Fetch and store PROJECTX_CONTRACT_ID
     #         pass
-
 
 async def projectx_api_request(method: str, endpoint: str, payload: dict = None):
     token = await get_projectx_token()
