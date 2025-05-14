@@ -11,7 +11,6 @@ app = FastAPI()
 # --- ENVIRONMENT CONFIG ---
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
 ACCOUNT_ID = os.getenv("ACCOUNT_ID")
-# It's good practice to also get your username for ProjectX login here
 PROJECTX_USERNAME = os.getenv("PROJECTX_USERNAME", "default_user") # Add your ProjectX username to env
 
 # --- GLOBAL STATE & PATHS ---
@@ -72,7 +71,7 @@ current_trade_id = None # To track the ProjectX orderId
 
 # --- ProjectX API Session Token ---
 projectx_session_token = None
-PROJECTX_BASE_URL = "https://gateway-rtc-demo.s2f.projectx.com" 
+PROJECTX_BASE_URL = "https://gateway-api.s2f.projectx.com/api"
 
 # --- DATA MODELS ---
 class SignalAlert(BaseModel):
