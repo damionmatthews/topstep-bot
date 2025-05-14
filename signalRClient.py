@@ -43,14 +43,8 @@ def setupSignalRConnection(authToken, contractId):
     try:
         rtc_connection.start()
         connection_started = True
-        if rtc_connection.connected:
-            logger.info("[SignalR] ✅ Connected successfully.")
-        else:
-            logger.error("[SignalR] ❌ Failed to connect.")
-    except Exception as e:
-        logger.error(f"[SignalR] ❌ Connection error: {e}")
-        connection_started = False
-
+        logger.info("[SignalR] ✅ Connected successfully.")
+        
 # Subscription logic
 def on_open_handler(contractId):
     global rtc_connection
