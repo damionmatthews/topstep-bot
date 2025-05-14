@@ -20,6 +20,8 @@ CONTRACT_ID = os.getenv("CONTRACT_ID", "CON.F.US.EP.M25")
 SESSION_TOKEN = None
 
 # Strategy storage path
+PROJECTX_BASE_URL = "https://api.topstepx.com"
+
 STRATEGY_PATH = "strategies.json"
 STRATEGIES_FILE_PATH = "strategies.json"  # Or wherever your strategies are stored
 def save_strategies_to_file():
