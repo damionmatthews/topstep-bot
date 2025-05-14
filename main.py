@@ -11,6 +11,7 @@ from signalRClient import setupSignalRConnection, closeSignalRConnection, get_ev
 import logging
 import os
 import asyncio
+from signalr_async.netcore.hub_connection_builder import HubConnectionBuilder
 
 app = FastAPI()
 
