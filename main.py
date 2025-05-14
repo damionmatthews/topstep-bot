@@ -15,6 +15,7 @@ ACCOUNT_ID = os.getenv("ACCOUNT_ID")
 # Strategy storage path
 STRATEGY_PATH = "strategies.json"
 TRADE_LOG_PATH = "trade_log.json"
+ALERT_LOG_PATH = "alert_log.json"
 
 # Load or initialize strategies
 if os.path.exists(STRATEGY_PATH):
@@ -37,6 +38,7 @@ else:
 current_strategy = "default"
 config = strategies[current_strategy]
 
+pause_trading = False
 daily_pnl = 0.0
 trade_active = False
 entry_price = None
@@ -55,6 +57,7 @@ class StatusResponse(BaseModel):
     trade_time: str | None
     current_signal: str | None
     daily_pnl: float
+    trading_paused: bool
 
 # --- HELPER FUNCTIONS ---
 def save_strategies():
@@ -63,13 +66,21 @@ def save_strategies():
 
 def log_trade(event: str, data: dict):
     entry = {"event": event, "timestamp": datetime.utcnow().isoformat(), **data}
+    log = []
     if os.path.exists(TRADE_LOG_PATH):
         with open(TRADE_LOG_PATH, "r") as f:
             log = json.load(f)
-    else:
-        log = []
     log.append(entry)
     with open(TRADE_LOG_PATH, "w") as f:
+        json.dump(log, f, indent=2)
+
+def log_alert(alert: dict):
+    log = []
+    if os.path.exists(ALERT_LOG_PATH):
+        with open(ALERT_LOG_PATH, "r") as f:
+            log = json.load(f)
+    log.append(alert)
+    with open(ALERT_LOG_PATH, "w") as f:
         json.dump(log, f, indent=2)
 
 async def get_current_price(symbol: str) -> float:
@@ -135,10 +146,15 @@ async def close_position():
 async def receive_alert_strategy(strategy: str, alert: SignalAlert):
     global trade_active, entry_price, current_signal, trade_time, daily_pnl, config
 
+    log_alert(alert.dict())
+
     if strategy not in strategies:
         return {"status": "error", "reason": f"Strategy '{strategy}' not found"}
 
     config = strategies[strategy]
+
+    if pause_trading:
+        return {"status": "paused", "reason": "trading is paused"}
 
     if daily_pnl >= config["MAX_DAILY_PROFIT"] or daily_pnl <= config["MAX_DAILY_LOSS"]:
         return {"status": "halted", "reason": "daily limit reached"}
@@ -169,5 +185,96 @@ async def get_status():
         entry_price=entry_price,
         trade_time=trade_time.isoformat() if trade_time else None,
         current_signal=current_signal,
-        daily_pnl=daily_pnl
+        daily_pnl=daily_pnl,
+        trading_paused=pause_trading
     )
+
+@app.get("/toggle")
+async def toggle_pause():
+    global pause_trading
+    pause_trading = not pause_trading
+    return {"trading_paused": pause_trading}
+
+@app.get("/logs/trades", response_class=HTMLResponse)
+async def trade_log_view():
+    if os.path.exists(TRADE_LOG_PATH):
+        with open(TRADE_LOG_PATH, "r") as f:
+            trades = json.load(f)
+    else:
+        trades = []
+    summary = {
+        "total_trades": len(trades),
+        "wins": sum(1 for t in trades if t["event"] == "exit" and t.get("pnl", 0) > 0),
+        "losses": sum(1 for t in trades if t["event"] == "exit" and t.get("pnl", 0) <= 0),
+        "avg_pnl": round(sum(t.get("pnl", 0) for t in trades if t["event"] == "exit") / max(1, sum(1 for t in trades if t["event"] == "exit")), 2)
+    }
+    return HTMLResponse(content=f"<h1>Trade History</h1><pre>{json.dumps(trades, indent=2)}</pre><h2>Performance Summary</h2><pre>{json.dumps(summary, indent=2)}</pre>")
+
+@app.get("/logs/alerts", response_class=HTMLResponse)
+async def alert_log_view():
+    if os.path.exists(ALERT_LOG_PATH):
+        with open(ALERT_LOG_PATH, "r") as f:
+            alerts = json.load(f)
+    else:
+        alerts = []
+    return HTMLResponse(content=f"<h1>Alert Log</h1><pre>{json.dumps(alerts, indent=2)}</pre>")
+
+@app.get("/", response_class=HTMLResponse)
+async def root_dashboard():
+    return await dashboard_menu()
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_menu():
+    return HTMLResponse("""
+    <html>
+    <head><title>Bot Dashboard</title></head>
+    <body>
+        <h1>Topstep Bot Dashboard</h1>
+        <ul>
+            <li><a href="/logs/trades">Trade History</a></li>
+            <li><a href="/logs/alerts">Alert Log</a></li>
+            <li><a href="/toggle">Toggle Trading</a></li>
+        </ul>
+    </body>
+    </html>
+    """)
+
+@app.get("/logs/trades", response_class=HTMLResponse)
+async def trade_log_view():
+    if os.path.exists(TRADE_LOG_PATH):
+        with open(TRADE_LOG_PATH, "r") as f:
+            trades = json.load(f)
+    else:
+        trades = []
+    summary = {
+        "total_trades": len(trades),
+        "wins": sum(1 for t in trades if t["event"] == "exit" and t.get("pnl", 0) > 0),
+        "losses": sum(1 for t in trades if t["event"] == "exit" and t.get("pnl", 0) <= 0),
+        "avg_pnl": round(sum(t.get("pnl", 0) for t in trades if t["event"] == "exit") / max(1, sum(1 for t in trades if t["event"] == "exit")), 2)
+    }
+    rows = "".join([
+        f"<tr><td>{t['timestamp']}</td><td>{t['event']}</td><td>{t.get('signal','')}</td><td>{t.get('entry_price','')}</td><td>{t.get('exit_price','')}</td><td>{t.get('pnl','')}</td></tr>"
+        for t in trades
+    ])
+    return HTMLResponse(f"""
+    <h1>Trade History</h1>
+    <table border='1'><tr><th>Time</th><th>Event</th><th>Signal</th><th>Entry</th><th>Exit</th><th>PnL</th></tr>{rows}</table>
+    <h2>Performance Summary</h2>
+    <pre>{json.dumps(summary, indent=2)}</pre>
+    """)
+
+@app.get("/logs/alerts", response_class=HTMLResponse)
+async def alert_log_view():
+    if os.path.exists(ALERT_LOG_PATH):
+        with open(ALERT_LOG_PATH, "r") as f:
+            alerts = json.load(f)
+    else:
+        alerts = []
+    rows = "".join([
+        f"<tr><td>{a['time']}</td><td>{a['signal']}</td><td>{a['ticker']}</td></tr>"
+        for a in alerts
+    ])
+    return HTMLResponse(f"""
+    <h1>Alert Log</h1>
+    <table border='1'><tr><th>Time</th><th>Signal</th><th>Ticker</th></tr>{rows}</table>
+    """)
