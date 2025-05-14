@@ -7,6 +7,8 @@ import os
 import json
 import csv
 
+from signalrcore.hub_connection_builder import HubConnectionBuilder
+
 app = FastAPI()
 
 # --- ENVIRONMENT CONFIG ---
@@ -215,15 +217,32 @@ async def close_position():
         response.raise_for_status()
         return response.json()
 
+# --- Start SignalR WebSocket connection ---
+def start_market_data_stream(token, contract_id):
+    hub_url = f"https://rtc.topstepx.com/hubs/market?access_token={token}"
+    connection = HubConnectionBuilder()\
+        .with_url(hub_url)\
+        .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
+        .build()
+
+    def handle_trade(args):
+        print("TRADE:", args)
+
+    def handle_quote(args):
+        print("QUOTE:", args)
+
+    connection.on("GatewayTrade", handle_trade)
+    connection.on("GatewayQuote", handle_quote)
+    connection.start()
+    connection.send("SubscribeContractTrades", [contract_id])
+    connection.send("SubscribeContractQuotes", [contract_id])
+    return connection
+    
 # Call on startup
 @app.on_event("startup")
-async def startup_event():
+async def on_startup():
     await get_projectx_token()
-    # Add logic to fetch contract details if needed, e.g.
-    # for strategy_name, strat_config in strategies.items():
-    #     if "CONTRACT_SYMBOL" in strat_config and "PROJECTX_CONTRACT_ID" not in strat_config:
-    #         # Fetch and store PROJECTX_CONTRACT_ID
-    #         pass
+    start_market_data_stream(SESSION_TOKEN, "CON.F.US.EP.M25")  # Replace with actual contract ID
 
 async def projectx_api_request(method: str, endpoint: str, payload: dict = None):
     token = await get_projectx_token()
@@ -372,9 +391,9 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
         try:
             await close_position_projectx(trade_strategy_cfg, current_signal_direction)
             log_event(TRADE_LOG_PATH, {
-                "event": "exit", "strategy": strategy_name_of_trade, "signal": current_signal_direction,
-                "entry_price": entry_price, "exit_price": current_market_price, "pnl": total_dollar_pnl,
-                "reason": exit_reason, "projectx_order_id": current_trade_id
+            "event": "entry", "strategy": strategy_webhook_name, "signal": alert.signal, 
+            "ticker": alert.ticker, "entry_price_estimate": entry_price,
+            "projectx_order_id": current_trade_id
             })
             daily_pnl += total_dollar_pnl # This daily_pnl should be per-strategy in a more advanced setup
             trade_active = False
@@ -723,46 +742,6 @@ async def toggle_trading_action_endpoint():
     log_event(ALERT_LOG_PATH, {"event": "Trading Status Changed", "status": status_message})
     return RedirectResponse(url="/toggle_trading_status", status_code=303)
 
-
-@app.get("/logs/trades", response_class=HTMLResponse)
-async def trade_log_view_page(): # Renamed
-    if os.path.exists(TRADE_LOG_PATH):
-        with open(TRADE_LOG_PATH, "r") as f:
-            try:
-                trades = json.load(f)
-            except json.JSONDecodeError:
-                trades = []
-    else:
-        trades = []
-    
-    # Performance Summary
-    exited_trades = [t for t in trades if t.get("event", "").startswith("exit")]
-    total_trades_for_summary = len(exited_trades)
-    wins = sum(1 for t in exited_trades if t.get("pnl", 0) > 0)
-    losses = sum(1 for t in exited_trades if t.get("pnl", 0) <= 0)
-    total_pnl_sum = sum(t.get("pnl", 0) for t in exited_trades)
-    avg_pnl = round(total_pnl_sum / max(1, total_trades_for_summary), 2) if total_trades_for_summary > 0 else 0.0
-
-    summary = {
-        "total_exited_trades": total_trades_for_summary,
-        "wins": wins,
-        "losses": losses,
-        "total_pnl": round(total_pnl_sum, 2),
-        "average_pnl_per_trade": avg_pnl
-    }
-    rows_html = "".join([
-        f"<tr><td>{t.get('timestamp','N/A')}</td><td>{t.get('strategy','N/A')}</td><td>{t.get('event','N/A')}</td><td>{t.get('signal','N/A')}</td><td>{t.get('entry_price_estimate', t.get('entry_price','N/A'))}</td><td>{t.get('exit_price','N/A')}</td><td>{t.get('pnl','N/A')}</td><td>{t.get('reason','N/A')}</td></tr>"
-        for t in reversed(trades) # Show newest first
-    ])
-    return HTMLResponse(f"""
-    <html><head><title>Trade History</title>{COMMON_CSS}
-        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
-    </head><body><div class="container">
-        <h1>Trade History</h1>
-        <p><a href="/dashboard_menu_page" class="button-link" style="margin-bottom:20px;">Back to Menu</a></p>
-        <h2>Performance Summary</h2><pre>{json.dumps(summary, indent=2)}</pre>
-        <table><thead><tr><th>Time (UTC)</th><th>Strategy</th><th>Event</th><th>Signal</th><th>Entry Est.</th><th>Exit</th><th>PnL ($)</th><th>Reason</th></tr></thead><tbody>{rows_html}</tbody></table>
-    </div></body></html>""")
 
 @app.get("/logs/trades", response_class=HTMLResponse)
 async def trade_log_view_page():
