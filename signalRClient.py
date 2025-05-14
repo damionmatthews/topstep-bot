@@ -39,8 +39,8 @@ def setupSignalRConnection(authToken, contractId):
     rtc_connection.on("GatewayQuote", handle_quote_event)
     rtc_connection.on("GatewayTrade", handle_trade_event)
     rtc_connection.on("GatewayDepth", handle_depth_event)
-    
-   try:
+
+    try:
         rtc_connection.start()
         connection_started = True
         if rtc_connection.connected:
