@@ -112,15 +112,10 @@ async def start_market_data_stream():
 
     logger.info("🌐 Starting WebSocket connection to market data stream...")
     try:
-        setupSignalRConnection(token, contract_id)
+        setupConnection(token, contract_id)
         logger.info("✅ Market data stream started successfully.")
     except Exception as e:
         logger.error(f"❌ Failed to start market data stream: {e}")
-
-    # Event listeners
-#   signalrEvents.on('quote', handle_quote_event)
-#    signalrEvents.on('trade', handle_trade_event)
-#    signalrEvents.on('depth', handle_depth_event)
 
 # --- EVENT HANDLERS ---
 def fetch_latest_quote():
@@ -344,6 +339,19 @@ async def close_position():
         response.raise_for_status()
         return response.json()
 
+# --- SIGNALR ---
+async def on_execution_message(message):
+    logger.info(f"Execution message received: {message}")
+
+async def start_websocket_listener():
+    global hub_connection
+    hub_connection = HubConnectionBuilder()\
+        .with_url("https://gateway.projectx.com/signalr")\
+        .build()
+    hub_connection.on("GatewayExecution", on_execution_message)
+    await hub_connection.start()
+    logger.info("WebSocket connected and listening.")
+
 # Call on startup
 @app.on_event("startup")
 async def on_startup():
@@ -397,46 +405,37 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
             logger.error(f"Unhandled API error: {str(e)}")
             raise
 
-async def place_order_projectx(direction: str, strategy_cfg: dict):
-    # Map signal to ProjectX API values
-    side_value = 0 if direction == "long" else 1 # 0 for Bid (buy), 1 for Ask (sell)
-    order_type_value = 2 # Market Order
-
-    if "PROJECTX_CONTRACT_ID" not in strategy_cfg:
-        # Fallback or dynamic fetch needed here. For now, error.
-        # Ideally, fetch this when strategy is loaded/selected if not present.
-        # contract_details = await projectx_api_request("POST", "/api/Contract/search", {"searchText": strategy_cfg["CONTRACT_SYMBOL"], "live": False})
-        # if contract_details and contract_details.get("contracts"):
-        #     strategy_cfg["PROJECTX_CONTRACT_ID"] = contract_details["contracts"][0]["id"] # Simplistic: takes first match
-        # else:
-        raise ValueError(f"PROJECTX_CONTRACT_ID not found for symbol {strategy_cfg['CONTRACT_SYMBOL']}")
-    
+# --- ORDER FUNCTIONS ---
+async def place_order_projectx():
     payload = {
-        "accountId": int(ACCOUNT_ID), # Ensure it's an integer
-        "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
-        "type": order_type_value,
-        "side": side_value,
-        "size": strategy_cfg["TRADE_SIZE"]
-        # limitPrice, stopPrice etc. would go here if not a market order
+        "accountId": int(ACCOUNT_ID),
+        "contractId": CONTRACT_ID,
+        "type": 2,
+        "side": 0,
+        "size": TRADE_SIZE
     }
-    log_event(ALERT_LOG_PATH, {"event": "Placing Order", "strategy": current_strategy_name, "payload": payload})
-    return await projectx_api_request("POST", "/api/Order/place", payload=payload)
+    result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
+    order_id = result.get("orderId")
+    logger.info(f"Order placed with ID: {order_id}")
+    return order_id
 
-
-async def close_position_projectx(strategy_cfg: dict, current_active_signal: str):
-    # Closing a position is effectively placing an opposing market order
-    # OR using a specific "close position" endpoint if available and preferred.
-    # For simplicity with market orders, we place an opposite order.
-    # A more robust way would be to use /api/Position/closeContract
+async def poll_order_fill(order_id: int):
+    max_attempts = 10
+    delay = 2
+    for attempt in range(max_attempts):
+        await asyncio.sleep(delay)
+        response = await projectx_api_request("POST", "/api/Order/searchOpen", payload={"accountId": int(ACCOUNT_ID)})
+        open_orders = response.get("orders", [])
+        if not any(order.get("id") == order_id for order in open_orders):
+            logger.info(f"Order {order_id} has been filled.")
+            return True
+        logger.info(f"Order {order_id} not filled yet. Attempt {attempt + 1}/{max_attempts}")
+    logger.warning(f"Order {order_id} was not filled after {max_attempts} attempts.")
+    return False
     
-    # This example uses the "place opposite order" method:
-    # opposite_direction = "short" if current_active_signal == "long" else "long"
-    # return await place_order_projectx(opposite_direction, strategy_cfg)
-
-    # Using the documented /api/Position/closeContract (preferred)
+async def close_position_projectx(strategy_cfg: dict, current_active_signal: str):
     if "PROJECTX_CONTRACT_ID" not in strategy_cfg:
          raise ValueError(f"PROJECTX_CONTRACT_ID not found for symbol {strategy_cfg['CONTRACT_SYMBOL']}")
-
     payload = {
         "accountId": int(ACCOUNT_ID),
         "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"]
@@ -444,28 +443,7 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     log_event(ALERT_LOG_PATH, {"event": "Closing Position", "strategy": current_strategy_name, "payload": payload})
     return await projectx_api_request("POST", "/api/Position/closeContract", payload=payload)
 
-
 async def fetch_current_price(contract_id: str):
-    # Placeholder - This needs to be a real price feed
-    # Option 1: Poll /api/History/retrieveBars (less ideal for frequent checks)
-    # try:
-    #     data = await projectx_api_request("POST", "/api/History/retrieveBars", {
-    #         "contractId": contract_id,
-    #         "live": False, # or True for live
-    #         "startTime": (datetime.utcnow() - timedelta(minutes=5)).isoformat() + "Z",
-    #         "endTime": datetime.utcnow().isoformat() + "Z",
-    #         "unit": 2, # Minute
-    #         "unitNumber": 1,
-    #         "limit": 1,
-    #         "includePartialBar": True
-    #     })
-    #     if data.get("bars") and len(data["bars"]) > 0:
-    #         return data["bars"][0]["c"] # Closing price of the last bar
-    # except Exception as e:
-    #     print(f"Error fetching current price: {e}")
-    # return None # Fallback
-
-    # For now, we'll keep the simulation for the /check endpoint as ProjectX real-time market data is not yet integrated.
     global entry_price
     if entry_price:
         # Simulate some price movement for testing check_and_close_trade
@@ -473,7 +451,6 @@ async def fetch_current_price(contract_id: str):
         simulated_move = random.uniform(-5, 5) # Simulate a move of +/- 5 points
         return entry_price + simulated_move
     return None
-
 
 async def check_and_close_active_trade(strategy_name_of_trade: str):
     global trade_active, entry_price, daily_pnl, current_signal_direction, current_trade_id
@@ -486,19 +463,11 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
     if not trade_strategy_cfg:
         print(f"Error: Strategy config for '{strategy_name_of_trade}' (active trade) not found.")
         return
-
-    # TODO: THIS IS WHERE YOU NEED TO GET THE REAL CURRENT PRICE FOR trade_strategy_cfg["PROJECTX_CONTRACT_ID"]
-    # current_market_price = await fetch_current_price(trade_strategy_cfg["PROJECTX_CONTRACT_ID"])
-    # For now, using placeholder from global state that /check updates for demo
     current_market_price = await fetch_current_price(trade_strategy_cfg.get("PROJECTX_CONTRACT_ID", "N/A")) # Get current price
-
 
     if current_market_price is None:
         print("Could not fetch current market price to check trade.")
         return
-
-    # PnL Calculation (assuming 1 point = $20 for NQ, and direct price diff for points)
-    # This should be made dynamic based on contract's tickSize and tickValue
     points_pnl = (current_market_price - entry_price) * (1 if current_signal_direction == 'long' else -1)
     dollar_pnl_per_contract = points_pnl * 20 # NQ specific, $20 per point
     total_dollar_pnl = dollar_pnl_per_contract * trade_strategy_cfg["TRADE_SIZE"]
