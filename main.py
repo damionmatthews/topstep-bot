@@ -6,10 +6,8 @@ import httpx
 import os
 import json
 import csv
-
-from signalrcore.hub_connection_builder import HubConnectionBuilder
-from signalRClient import setupSignalRConnection, closeSignalRConnection, signalrEvents
-import os
+from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data
+import logging
 
 app = FastAPI()
 
@@ -22,6 +20,9 @@ SESSION_TOKEN = None
 STRATEGY_PATH = "strategies.json"
 TRADE_LOG_PATH = "trade_log.json"
 ALERT_LOG_PATH = "alert_log.json"
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Load or initialize strategies
 if os.path.exists(STRATEGY_PATH):
@@ -55,7 +56,7 @@ latest_market_data = []
 # --- AUTHENTICATION ---
 async def login_to_projectx():
     global SESSION_TOKEN
-    print("Attempting to log in to ProjectX...")
+    logger.info("Attempting to log in to ProjectX...")
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
@@ -65,11 +66,11 @@ async def login_to_projectx():
             response.raise_for_status()
             SESSION_TOKEN = response.json().get("token")
             if SESSION_TOKEN:
-                print("ProjectX Login successful")
+                logger.info("ProjectX Login successful")
             else:
-                print("ProjectX Login failed: No token received")
+                logger.error("ProjectX Login failed: No token received")
         except Exception as e:
-            print(f"ProjectX Login failed: {e}")
+            logger.error(f"ProjectX Login failed: {e}")
             SESSION_TOKEN = None
 
 async def ensure_token():
@@ -82,39 +83,39 @@ async def get_projectx_token():
     return SESSION_TOKEN
 
 async def start_market_data_stream():
-    global market_data_connection
-
-    if market_data_connection:
-        print("🔁 WebSocket already connected. Skipping restart.")
-        return
-
     # Ensure the session token and contract ID are valid
-    token = os.getenv("SESSION_TOKEN")
+    token = SESSION_TOKEN
     contract_id = os.getenv("PROJECTX_CONTRACT_ID")
 
     if not token:
-        print("❌ No valid SESSION_TOKEN found. Aborting WebSocket connection.")
+        logger.error("❌ No valid SESSION_TOKEN found. Aborting WebSocket connection.")
         return
 
     if not contract_id:
-        print("❌ No valid PROJECTX_CONTRACT_ID found. Aborting WebSocket connection.")
+        logger.error("❌ No valid PROJECTX_CONTRACT_ID found. Aborting WebSocket connection.")
         return
 
-    print("🌐 Starting WebSocket connection to market data stream...")
-    
-    # Attempt to connect
+    logger.info("🌐 Starting WebSocket connection to market data stream...")
     try:
         setupSignalRConnection(token, contract_id)
-        market_data_connection = True
-        print("✅ Market data stream started successfully.")
+        logger.info("✅ Market data stream started successfully.")
     except Exception as e:
-        print(f"❌ Failed to start market data stream: {e}")
-        market_data_connection = None
+        logger.error(f"❌ Failed to start market data stream: {e}")
 
     # Event listeners
     signalrEvents.on('quote', handle_quote_event)
     signalrEvents.on('trade', handle_trade_event)
     signalrEvents.on('depth', handle_depth_event)
+
+# --- EVENT HANDLERS ---
+def fetch_latest_quote():
+    return get_event_data('quote')
+
+def fetch_latest_trade():
+    return get_event_data('trade')
+
+def fetch_latest_depth():
+    return get_event_data('depth')
 
 def handle_quote_event(data):
     print(f"[Quote Event] Received Data: {data}")
@@ -134,7 +135,13 @@ async def stop_market_data_stream():
 
 @app.on_event("startup")
 async def startup_event():
+    await ensure_token()
+    await start_market_data_stream()
     await get_projectx_token()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await stop_market_data_stream()
 
 # --- DATA MODEL ---
 class SignalAlert(BaseModel):
