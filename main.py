@@ -13,7 +13,6 @@ import os
 app = FastAPI()
 
 # --- ENVIRONMENT CONFIG ---
-TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
 ACCOUNT_ID = os.getenv("ACCOUNT_ID")
 CONTRACT_ID = os.getenv("CONTRACT_ID", "CON.F.US.EP.M25")
 SESSION_TOKEN = None
