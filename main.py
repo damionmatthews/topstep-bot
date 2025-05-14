@@ -1,11 +1,14 @@
-# main.py (Simplified)
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from datetime import datetime
 import httpx
 import os
 
 app = FastAPI()
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- ENVIRONMENT CONFIG ---
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
@@ -28,6 +31,13 @@ class SignalAlert(BaseModel):
     signal: str
     ticker: str
     time: str
+
+class StatusResponse(BaseModel):
+    trade_active: bool
+    entry_price: float | None
+    trade_time: str | None
+    current_signal: str | None
+    daily_pnl: float
 
 # --- HELPER FUNCTIONS ---
 async def place_order(direction: str):
@@ -80,7 +90,7 @@ async def close_position():
         response.raise_for_status()
         return response.json()
 
-# --- MAIN ENDPOINT ---
+# --- MAIN ENDPOINTS ---
 @app.post("/webhook")
 async def receive_alert(alert: SignalAlert):
     global trade_active, entry_price, current_signal, trade_time, daily_pnl
@@ -111,3 +121,30 @@ async def check_price():
     current_price = entry_price + 25
     await check_and_close_trade(current_price)
     return {"status": "checked", "price": current_price}
+
+@app.get("/status", response_model=StatusResponse)
+async def get_status():
+    return StatusResponse(
+        trade_active=trade_active,
+        entry_price=entry_price,
+        trade_time=trade_time.isoformat() if trade_time else None,
+        current_signal=current_signal,
+        daily_pnl=daily_pnl
+    )
+
+@app.get("/", response_class=HTMLResponse)
+async def dashboard():
+    html_content = f"""
+    <html>
+    <head><title>Trading Bot Dashboard</title></head>
+    <body>
+        <h1>Topstep Bot Dashboard</h1>
+        <p><strong>Trade Active:</strong> {trade_active}</p>
+        <p><strong>Entry Price:</strong> {entry_price}</p>
+        <p><strong>Trade Time:</strong> {trade_time}</p>
+        <p><strong>Current Signal:</strong> {current_signal}</p>
+        <p><strong>Daily PnL:</strong> {daily_pnl}</p>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
