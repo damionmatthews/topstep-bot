@@ -62,7 +62,7 @@ async def login_to_projectx():
         try:
             response = await client.post(
                 "https://api.topstepx.com/api/Auth/loginKey",
-                json={"userName": os.getenv("TOPSTEP_USERNAME"), "apiKey": TOPSTEP_API_KEY}
+                json={"userName": os.getenv("TOPSTEP_USERNAME"), "apiKey": os.getenv("TOPSTEP_API_KEY")}
             )
             response.raise_for_status()
             SESSION_TOKEN = response.json().get("token")
