@@ -45,26 +45,6 @@ entry_price = None
 trade_time = None
 current_signal = None
 
-# Initialize log files if they don't exist
-for path in [STRATEGY_PATH, TRADE_LOG_PATH, ALERT_LOG_PATH]:
-    if not os.path.exists(path) and path.endswith(".json"):
-        with open(path, "w") as f:
-            if path == STRATEGY_PATH:
-                # Initial default strategy if strategies.json is missing
-                json.dump({
-                    "default": {
-                        "MAX_DAILY_LOSS": -1200.0,
-                        "MAX_DAILY_PROFIT": 2000.0,
-                        "MAX_TRADE_LOSS": -350.0,
-                        "MAX_TRADE_PROFIT": 450.0,
-                        "CONTRACT_SYMBOL": "NQ", # This will need to be mapped to contractId
-                        "TRADE_SIZE": 1,
-                        "PROJECTX_CONTRACT_ID": "CON.F.US.MNQ.H25" # Example, fetch dynamically
-                    }
-                }, f, indent=2)
-            else:
-                json.dump([], f, indent=2) # Initialize log files as empty lists
-
 # --- AUTHENTICATION ---
 async def login_to_projectx():
     global SESSION_TOKEN
@@ -88,6 +68,15 @@ async def login_to_projectx():
 async def ensure_token():
     if not SESSION_TOKEN:
         await login_to_projectx()
+
+async def get_projectx_token():
+    if not SESSION_TOKEN:
+        await login_to_projectx()
+    return SESSION_TOKEN
+
+@app.on_event("startup")
+async def startup_event():
+    await get_projectx_token()
 
 # --- DATA MODEL ---
 class SignalAlert(BaseModel):
@@ -263,7 +252,6 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
         
         response.raise_for_status() # Raise HTTPError for bad responses (4XX or 5XX)
         return response.json()
-
 
 async def place_order_projectx(direction: str, strategy_cfg: dict):
     # Map signal to ProjectX API values
