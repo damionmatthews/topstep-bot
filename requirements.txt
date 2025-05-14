@@ -2,4 +2,6 @@
 fastapi
 uvicorn
 httpx
+jinja2
 python-dotenv
+signalrcore
