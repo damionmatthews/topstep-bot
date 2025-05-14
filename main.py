@@ -238,8 +238,6 @@ async def clone_strategy(strategy: str):
         save_strategies()
     return RedirectResponse(url="/", status_code=303)
 
-    //
-
     @app.get("/", response_class=HTMLResponse)
 async def root_dashboard():
     return await dashboard_menu()
