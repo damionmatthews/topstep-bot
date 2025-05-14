@@ -83,7 +83,11 @@ async def get_projectx_token():
     return SESSION_TOKEN
 
 async def start_market_data_stream():
+    global SESSION_TOKEN
     # Ensure the session token and contract ID are valid
+    if not SESSION_TOKEN:
+        await login_to_projectx()
+
     token = SESSION_TOKEN
     contract_id = os.getenv("PROJECTX_CONTRACT_ID")
 
