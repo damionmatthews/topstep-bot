@@ -41,9 +41,12 @@ def setupSignalRConnection(authToken, contractId):
     rtc_connection.on("GatewayDepth", handle_depth_event)
 
     try:
-        rtc_connection.start()
-        connection_started = True
-        logger.info("[SignalR] ✅ Connected successfully.")
+    rtc_connection.start()
+    connection_started = True
+    logger.info("[SignalR] ✅ Connected successfully.")
+except Exception as e:
+    logger.error(f"[SignalR] ❌ Connection error: {e}")
+    connection_started = False
         
 # Subscription logic
 def on_open_handler(contractId):
