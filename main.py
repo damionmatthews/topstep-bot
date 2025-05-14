@@ -357,30 +357,44 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
     if not token:
         raise Exception("Not authenticated with ProjectX")
 
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "accept": "application/json"} # text/plain was in docs, but json is more common
-    
-    async with httpx.AsyncClient() as client:
-        if method.upper() == "POST":
-            response = await client.post(f"{PROJECTX_BASE_URL}{endpoint}", json=payload, headers=headers)
-        elif method.upper() == "GET": # Example if you add GET requests
-            response = await client.get(f"{PROJECTX_BASE_URL}{endpoint}", headers=headers)
-        else:
-            raise ValueError("Unsupported HTTP method")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
 
-        if response.status_code == 401: # Token expired or invalid
-            print("ProjectX token expired or invalid, attempting re-login.")
-            projectx_session_token = None # Clear old token
-            token = await get_projectx_token() # Get new token
-            if not token:
-                raise Exception("Re-authentication with ProjectX failed")
-            headers["Authorization"] = f"Bearer {token}" # Update headers
-            # Retry the original request
+    async with httpx.AsyncClient() as client:
+        url = f"{PROJECTX_BASE_URL}{endpoint}"
+
+        try:
             if method.upper() == "POST":
-                response = await client.post(f"{PROJECTX_BASE_URL}{endpoint}", json=payload, headers=headers)
-            # Add retry for GET if needed
-        
-        response.raise_for_status() # Raise HTTPError for bad responses (4XX or 5XX)
-        return response.json()
+                response = await client.post(url, json=payload, headers=headers)
+            elif method.upper() == "GET":
+                response = await client.get(url, headers=headers)
+            else:
+                raise ValueError("Unsupported HTTP method")
+
+            if response.status_code == 401:
+                logger.warning("Token expired or unauthorized. Attempting re-login.")
+                await login_to_projectx()
+                token = await get_projectx_token()
+                if not token:
+                    raise Exception("Re-authentication failed")
+
+                headers["Authorization"] = f"Bearer {token}"
+                if method.upper() == "POST":
+                    response = await client.post(url, json=payload, headers=headers)
+                elif method.upper() == "GET":
+                    response = await client.get(url, headers=headers)
+
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as http_err:
+            logger.error(f"HTTP error {http_err.response.status_code}: {http_err.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Unhandled API error: {str(e)}")
+            raise
 
 async def place_order_projectx(direction: str, strategy_cfg: dict):
     # Map signal to ProjectX API values
@@ -390,7 +404,7 @@ async def place_order_projectx(direction: str, strategy_cfg: dict):
     if "PROJECTX_CONTRACT_ID" not in strategy_cfg:
         # Fallback or dynamic fetch needed here. For now, error.
         # Ideally, fetch this when strategy is loaded/selected if not present.
-        # contract_details = await projectx_api_request("POST", "/Contract/search", {"searchText": strategy_cfg["CONTRACT_SYMBOL"], "live": False})
+        # contract_details = await projectx_api_request("POST", "/api/Contract/search", {"searchText": strategy_cfg["CONTRACT_SYMBOL"], "live": False})
         # if contract_details and contract_details.get("contracts"):
         #     strategy_cfg["PROJECTX_CONTRACT_ID"] = contract_details["contracts"][0]["id"] # Simplistic: takes first match
         # else:
@@ -405,7 +419,7 @@ async def place_order_projectx(direction: str, strategy_cfg: dict):
         # limitPrice, stopPrice etc. would go here if not a market order
     }
     log_event(ALERT_LOG_PATH, {"event": "Placing Order", "strategy": current_strategy_name, "payload": payload})
-    return await projectx_api_request("POST", "/Order/place", payload=payload)
+    return await projectx_api_request("POST", "/api/Order/place", payload=payload)
 
 
 async def close_position_projectx(strategy_cfg: dict, current_active_signal: str):
@@ -427,14 +441,14 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
         "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"]
     }
     log_event(ALERT_LOG_PATH, {"event": "Closing Position", "strategy": current_strategy_name, "payload": payload})
-    return await projectx_api_request("POST", "/Position/closeContract", payload=payload)
+    return await projectx_api_request("POST", "/api/Position/closeContract", payload=payload)
 
 
 async def fetch_current_price(contract_id: str):
     # Placeholder - This needs to be a real price feed
     # Option 1: Poll /api/History/retrieveBars (less ideal for frequent checks)
     # try:
-    #     data = await projectx_api_request("POST", "/History/retrieveBars", {
+    #     data = await projectx_api_request("POST", "/api/History/retrieveBars", {
     #         "contractId": contract_id,
     #         "live": False, # or True for live
     #         "startTime": (datetime.utcnow() - timedelta(minutes=5)).isoformat() + "Z",
