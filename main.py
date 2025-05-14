@@ -489,10 +489,25 @@ async def get_status_endpoint(): # Renamed
         active_strategy_config=strategies.get(current_strategy_name, {}) # Config displayed in UI
     )
 
-@app.get("/", response_class=HTMLResponse, methods=["GET", "HEAD"]) # Add HEAD here
-async def config_dashboard_with_selection(strategy_selected: str = None):
-    global current_strategy_name, active_strategy_config
-async def config_dashboard_page(): # Renamed for clarity
+@app.get("/", response_class=HTMLResponse)
+async def config_dashboard_with_selection_get(strategy_selected: str = None):
+    global current_strategy_name
+    if strategy_selected and strategy_selected in strategies:
+        current_strategy_name = strategy_selected
+    # active_strategy_config is updated by the dashboard_page if current_strategy_name changes
+    return await config_dashboard_page()
+
+@app.head("/", response_class=HTMLResponse)
+async def config_dashboard_with_selection_head(strategy_selected: str = None):
+    global current_strategy_name
+    if strategy_selected and strategy_selected in strategies:
+        current_strategy_name = strategy_selected
+    # FastAPI handles sending only headers for HEAD requests when the GET handler returns a Response
+    return await config_dashboard_page()
+
+# Make sure your config_dashboard_page function is defined correctly
+async def config_dashboard_page(): # This is the function that generates the actual HTML
+    global current_strategy_name # This global is important for it to pick up the selection
     strategy_options_html = "".join([f'<option value="{name}" {"selected" if name == current_strategy_name else ""}>{name}</option>' for name in strategies])
     
     strategy_rows_html = ""
@@ -501,8 +516,15 @@ async def config_dashboard_page(): # Renamed for clarity
         clone_action = f"<a href='/clone_strategy_action?strategy_to_clone={name}' class='button-link clone-button'>Clone</a>"
         strategy_rows_html += f"<tr><td>{name}</td><td>{delete_action} {clone_action}</td></tr>"
 
-    # Config for the strategy currently selected in the UI for display/editing
-    displayed_config = strategies.get(current_strategy_name, strategies["default"])
+    displayed_config = strategies.get(current_strategy_name, strategies.get("default", {}))
+
+    # Using the global runtime state variables for the status section
+    entry_price_display = entry_price if entry_price is not None else "None"
+    trade_time_display = trade_time.isoformat() if trade_time else "None"
+    current_signal_display = current_signal_direction if current_signal_direction else "None"
+    daily_pnl_display = f"{daily_pnl:.2f}"
+    strategy_opened_trade_display = strategy_that_opened_trade if strategy_that_opened_trade else "N/A"
+
 
     html_content = f"""
     <html><head><title>Trading Bot Dashboard</title>{COMMON_CSS}
@@ -511,7 +533,7 @@ async def config_dashboard_page(): # Renamed for clarity
         <h1>Trading Bot Configuration</h1>
         <form action="/update_strategy_config" method="post">
             <label for="strategy_select">Displaying/Editing Strategy:</label>
-            <select name="strategy_to_display" id="strategy_select" onchange="window.location.href = '/?strategy_selected=' + this.value">{strategy_options_html}</select>
+            <select name="strategy_to_display" id="strategy_select">{strategy_options_html}</select>
             
             <h2>Configure Strategy: '{current_strategy_name}'</h2>
             <input type="hidden" name="strategy_name_to_update" value="{current_strategy_name}">
@@ -544,22 +566,19 @@ async def config_dashboard_page(): # Renamed for clarity
         <div class="status-section" id="status-container">
             <p><strong>Strategy in UI:</strong> {current_strategy_name}</p>
             <p><strong>Globally Active Trade:</strong> {trade_active}</p>
-            <p><strong>Trade Opened By Strategy:</strong> {strategy_that_opened_trade if strategy_that_opened_trade else "N/A"}</p>
-            <p><strong>Entry Price:</strong> {entry_price if entry_price is not None else "None"}</p>
-            <p><strong>Trade Time (UTC):</strong> {trade_time.isoformat() if trade_time else "None"}</p>
-            <p><strong>Current Signal Direction:</strong> {current_signal_direction if current_signal_direction else "None"}</p>
-            <p><strong>Global Daily PnL:</strong> {daily_pnl:.2f}</p>
-            <!-- Add a button to manually check trade status -->
+            <p><strong>Trade Opened By Strategy:</strong> {strategy_opened_trade_display}</p>
+            <p><strong>Entry Price:</strong> {entry_price_display}</p>
+            <p><strong>Trade Time (UTC):</strong> {trade_time_display}</p>
+            <p><strong>Current Signal Direction:</strong> {current_signal_display}</p>
+            <p><strong>Global Daily PnL:</strong> {daily_pnl_display}</p>
             <p><a href="/check_trade_status" class="button-link">Manually Check Active Trade</a></p>
         </div>
         <p><a href="/dashboard_menu_page" class="button-link">Go to Main Menu</a></p>
     </div>
     <script>
-        // Simplified strategy selector reload
         document.getElementById('strategy_select').addEventListener('change', function() {{
             window.location.href = '/?strategy_selected=' + this.value;
         }});
-        // TODO: Add JS for real-time status updates via /status endpoint if desired
     </script>
     </body></html>"""
     return HTMLResponse(content=html_content)
