@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime
 import httpx
 import os
