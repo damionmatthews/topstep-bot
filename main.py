@@ -895,4 +895,4 @@ async def alert_log_view_page():
     <h1>Alert History</h1>
     <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
     <table><thead><tr><th>Time</th><th>Strategy</th><th>Signal</th><th>Ticker</th><th>Event</th><th>Error</th></tr></thead><tbody>{rows_html}</tbody></table>
-    </div></body></html>")
+    </div></body></html>""")
