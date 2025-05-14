@@ -329,8 +329,8 @@ async def close_position():
             headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
             json={
                 "accountId": ACCOUNT_ID,
-                "symbol": config["CONTRACT_SYMBOL"],
-                "qty": config["TRADE_SIZE"],
+                "symbol": strategy_cfg["CONTRACT_SYMBOL"],
+                "qty": strategy_cfg["TRADE_SIZE"],
                 "side": side,
                 "type": "market"
             }
@@ -405,7 +405,7 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
             raise
 
 # --- ORDER FUNCTIONS ---
-async def place_order_projectx():
+async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
     payload = {
         "accountId": int(ACCOUNT_ID),
         "contractId": CONTRACT_ID,
