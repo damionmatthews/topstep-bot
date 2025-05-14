@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from datetime import datetime
 import httpx
@@ -8,8 +7,6 @@ import os
 import json
 
 app = FastAPI()
-
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # --- ENVIRONMENT CONFIG ---
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
@@ -114,9 +111,14 @@ async def close_position():
         return response.json()
 
 # --- MAIN ENDPOINTS ---
-@app.post("/webhook")
-async def receive_alert(alert: SignalAlert):
-    global trade_active, entry_price, current_signal, trade_time, daily_pnl
+@app.post("/webhook/{strategy}")
+async def receive_alert_strategy(strategy: str, alert: SignalAlert):
+    global trade_active, entry_price, current_signal, trade_time, daily_pnl, config
+
+    if strategy not in strategies:
+        return {"status": "error", "reason": f"Strategy '{strategy}' not found"}
+
+    config = strategies[strategy]
 
     if daily_pnl >= config["MAX_DAILY_PROFIT"] or daily_pnl <= config["MAX_DAILY_LOSS"]:
         return {"status": "halted", "reason": "daily limit reached"}
@@ -124,7 +126,7 @@ async def receive_alert(alert: SignalAlert):
     if trade_active:
         return {"status": "ignored", "reason": "trade already active"}
 
-    print(f"Received {alert.signal} signal for {alert.ticker} at {alert.time}")
+    print(f"[{strategy}] Received {alert.signal} signal for {alert.ticker} at {alert.time}")
 
     try:
         result = await place_order(alert.signal)
@@ -158,6 +160,7 @@ async def get_status():
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     strategy_options = "".join([f'<option value="{name}" {"selected" if name == current_strategy else ""}>{name}</option>' for name in strategies])
+    rows = "".join([f"<tr><td>{name}</td><td><a href='/delete?strategy={name}'>Delete</a> | <a href='/clone?strategy={name}'>Clone</a></td></tr>" for name in strategies])
     current = strategies[current_strategy]
     html_content = f"""
     <html>
@@ -174,6 +177,8 @@ async def dashboard():
             <label>Max Daily Profit: <input name="max_daily_profit" type="number" value="{current['MAX_DAILY_PROFIT']}" /></label><br>
             <button type="submit">Update Config</button>
         </form>
+        <h2>Strategies</h2>
+        <table border='1'><tr><th>Name</th><th>Actions</th></tr>{rows}</table>
         <hr>
         <p><strong>Trade Active:</strong> {trade_active}</p>
         <p><strong>Entry Price:</strong> {entry_price}</p>
@@ -209,4 +214,26 @@ async def update_config(
     save_strategies()
     current_strategy = strategy
     config = strategies[current_strategy]
+    return RedirectResponse(url="/", status_code=303)
+
+@app.get("/delete")
+async def delete_strategy(strategy: str):
+    global current_strategy, config
+    if strategy in strategies and strategy != "default":
+        del strategies[strategy]
+        save_strategies()
+        current_strategy = "default"
+        config = strategies[current_strategy]
+    return RedirectResponse(url="/", status_code=303)
+
+@app.get("/clone")
+async def clone_strategy(strategy: str):
+    if strategy in strategies:
+        new_name = f"{strategy}_copy"
+        count = 1
+        while new_name in strategies:
+            new_name = f"{strategy}_copy{count}"
+            count += 1
+        strategies[new_name] = dict(strategies[strategy])
+        save_strategies()
     return RedirectResponse(url="/", status_code=303)
