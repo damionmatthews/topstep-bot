@@ -111,7 +111,7 @@ async def start_market_data_stream():
 
     logger.info("🌐 Starting WebSocket connection to market data stream...")
     try:
-        setupConnection(token, contract_id)
+        setupSignalRConnection(token, contract_id)
         logger.info("✅ Market data stream started successfully.")
     except Exception as e:
         logger.error(f"❌ Failed to start market data stream: {e}")
