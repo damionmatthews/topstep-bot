@@ -764,30 +764,6 @@ async def trade_log_view_page(): # Renamed
         <table><thead><tr><th>Time (UTC)</th><th>Strategy</th><th>Event</th><th>Signal</th><th>Entry Est.</th><th>Exit</th><th>PnL ($)</th><th>Reason</th></tr></thead><tbody>{rows_html}</tbody></table>
     </div></body></html>""")
 
-@app.get("/logs/alerts", response_class=HTMLResponse)
-async def alert_log_view_page(): # Renamed
-    if os.path.exists(ALERT_LOG_PATH):
-        with open(ALERT_LOG_PATH, "r") as f:
-            try:
-                alerts = json.load(f)
-            except json.JSONDecodeError:
-                alerts = []
-    else:
-        alerts = []
-    rows_html = "".join([
-        f"<tr><td>{a.get('timestamp','N/A')}</td><td>{a.get('event','N/A')}</td><td>{a.get('strategy','N/A')}</td><td>{a.get('signal','N/A')}</td><td>{a.get('ticker','N/A')}</td><td>{a.get('error',a.get('detail','N/A'))}</td></tr>"
-        for a in reversed(alerts) # Show newest first
-    ])
-    return HTMLResponse(f"""
-    <html><head><title>Alert Log</title>{COMMON_CSS}
-        <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
-    </head><body><div class="container">
-        <h1>Alert Log</h1>
-        <p><a href="/dashboard_menu_page" class="button-link" style="margin-bottom:20px;">Back to Menu</a></p>
-        <table><thead><tr><th>Time (UTC)</th><th>Event</th><th>Strategy</th><th>Signal</th><th>Ticker</th><th>Details/Error</th></tr></thead><tbody>{rows_html}</tbody></table>
-    </div></body></html>""")
-
-
 @app.get("/logs/trades", response_class=HTMLResponse)
 async def trade_log_view_page():
     if os.path.exists(TRADE_LOG_PATH):
@@ -799,7 +775,6 @@ async def trade_log_view_page():
     else:
         trades = []
 
-    # Grouped summary per strategy
     summary_by_strategy = {}
     for t in trades:
         if not t.get("event", "").startswith("exit"):
@@ -842,7 +817,7 @@ async def trade_log_view_page():
     <h2>Trade Log</h2>
     <a href='/download/trades.csv' class='button-link'>Download CSV</a>
     <table><thead><tr><th>Time</th><th>Strategy</th><th>Symbol</th><th>Signal</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead><tbody>{rows_html}</tbody></table>
-    </div></body></html>")
+    </div></body></html>""")
 
 @app.get("/download/trades.csv")
 async def download_trade_log():
@@ -856,7 +831,6 @@ async def download_trade_log():
             trades = []
 
     def generate():
-        csv_writer = csv.writer(io.StringIO())
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=["timestamp", "strategy", "ticker", "signal", "entry_price_estimate", "exit_price", "pnl"])
         writer.writeheader()
