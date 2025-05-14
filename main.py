@@ -8,6 +8,7 @@ import json
 import csv
 from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data
 import logging
+import os
 
 app = FastAPI()
 
@@ -137,10 +138,32 @@ async def stop_market_data_stream():
         closeSignalRConnection()
         market_data_connection = None
 
+async def startup_event():
+    logger.info("Attempting to log in to ProjectX...")
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.topstepx.com/api/Auth/loginKey",
+            json={"userName": TOPSTEP_USERNAME, "apiKey": TOPSTEP_API_KEY},
+            headers={"Content-Type": "application/json"}
+        )
+        response.raise_for_status()
+        result = response.json()
+        token = result.get("token")
+        if not token:
+            raise RuntimeError("No token returned from login")
+
+        logger.info("ProjectX Login successful")
+
+        # ✅ Pass required arguments to the streaming function
+        setupSignalRConnection(token, CONTRACT_ID)
+        
 @app.on_event("startup")
 async def startup_event():
     await ensure_token()
     await start_market_data_stream()
+
+async def startup_wrapper():
+    await startup_event()
 
 @app.on_event("shutdown")
 async def shutdown_event():
