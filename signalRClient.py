@@ -1,6 +1,6 @@
 # Improved signalRClient.py
 from signalrcore.hub_connection_builder import HubConnectionBuilder
-from signalrcore.protocol.message_type import MessageType
+from signalrcore.hub.base_hub_connection import HubConnectionState
 from signalrcore.transport.websockets.websocket_transport import WebsocketTransport
 from threading import Event
 import logging
