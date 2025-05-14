@@ -108,9 +108,9 @@ async def start_market_data_stream():
         logger.error(f"❌ Failed to start market data stream: {e}")
 
     # Event listeners
-    signalrEvents.on('quote', handle_quote_event)
-    signalrEvents.on('trade', handle_trade_event)
-    signalrEvents.on('depth', handle_depth_event)
+#   signalrEvents.on('quote', handle_quote_event)
+#    signalrEvents.on('trade', handle_trade_event)
+#    signalrEvents.on('depth', handle_depth_event)
 
 # --- EVENT HANDLERS ---
 def fetch_latest_quote():
@@ -160,7 +160,7 @@ async def startup_event():
 @app.on_event("startup")
 async def startup_event():
     await ensure_token()
-    await start_market_data_stream()
+    await start_market_data_stream(token, CONTRACT_ID)
 
 async def startup_wrapper():
     await startup_event()
