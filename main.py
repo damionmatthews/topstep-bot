@@ -14,7 +14,6 @@ ACCOUNT_ID = os.getenv("ACCOUNT_ID")
 PROJECTX_USERNAME = os.getenv("PROJECTX_USERNAME", "default_user") # Add your ProjectX username to env
 
 # --- GLOBAL STATE & PATHS ---
-# Strategy storage path
 STRATEGY_PATH = "strategies.json"
 TRADE_LOG_PATH = "trades.json"
 ALERT_LOG_PATH = "alerts.json"
@@ -70,8 +69,8 @@ current_signal_direction = None # 'long' or 'short'
 current_trade_id = None # To track the ProjectX orderId
 
 # --- ProjectX API Session Token ---
-projectx_session_token = None
-PROJECTX_BASE_URL = "https://gateway-api.s2f.projectx.com/api"
+PROJECTX_BASE_URL = "https://gateway-api-demo.s2f.projectx.com/api"
+projectx_session_token = None # To store the token
 
 # --- DATA MODELS ---
 class SignalAlert(BaseModel):
