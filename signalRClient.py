@@ -28,17 +28,14 @@ def setupSignalRConnection(authToken, contractId):
         return
 
     marketHubUrl = f"https://rtc.topstepx.com/hubs/market?access_token={authToken}"
-    rtc_connection = HubConnectionBuilder()\
-        .with_url(marketHubUrl)\
-        .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
-        .build()
+rtc_connection = HubConnectionBuilder()\
+    .with_url(marketHubUrl)\
+    .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
+    .build()
 
-    # Event Handlers
-    rtc_connection.on_open(lambda: on_open_handler(contractId))
-    rtc_connection.on_close(on_close_handler)
-    rtc_connection.on("GatewayQuote", handle_quote_event)
-    rtc_connection.on("GatewayTrade", handle_trade_event)
-    rtc_connection.on("GatewayDepth", handle_depth_event)
+if not rtc_connection:
+    logger.error("[SignalR] ❌ Failed to build HubConnection.")
+    return
 
 try:
     rtc_connection.start()
