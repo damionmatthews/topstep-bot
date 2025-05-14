@@ -45,9 +45,6 @@ entry_price = None
 trade_time = None
 current_signal = None
 
-
-
-
 # Initialize log files if they don't exist
 for path in [STRATEGY_PATH, TRADE_LOG_PATH, ALERT_LOG_PATH]:
     if not os.path.exists(path) and path.endswith(".json"):
@@ -226,37 +223,6 @@ async def close_position():
         )
         response.raise_for_status()
         return response.json()
-
-async def get_projectx_token():
-    global projectx_session_token
-    if projectx_session_token: # Basic check, add expiry logic later
-        return projectx_session_token
-    
-    if not PROJECTX_USERNAME or not TOPSTEP_API_KEY:
-        print("Error: ProjectX Username or API Key not configured.")
-        return None
-
-    async with httpx.AsyncClient() as client:
-        try:
-            print("Attempting to log in to ProjectX...")
-            response = await client.post(
-                f"{PROJECTX_BASE_URL}/Auth/loginKey",
-                json={"userName": PROJECTX_USERNAME, "apiKey": TOPSTEP_API_KEY}
-            )
-            response.raise_for_status()
-            data = response.json()
-            if data.get("success") and data.get("token"):
-                projectx_session_token = data["token"]
-                print("ProjectX Login successful.")
-                return projectx_session_token
-            else:
-                print(f"ProjectX Login failed: {data.get('errorMessage')}")
-                projectx_session_token = None
-                return None
-        except Exception as e:
-            print(f"Error during ProjectX login: {e}")
-            projectx_session_token = None
-            return None
 
 # Call on startup
 @app.on_event("startup")
