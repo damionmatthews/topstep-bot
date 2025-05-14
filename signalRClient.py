@@ -18,7 +18,7 @@ shutdown_event = Event()
 
 # Setup connection
 def setupSignalRConnection(authToken, contractId):
-    global rtc_connection, connection_started, shutdown_event
+    global rtc_connection, connection_started
 
     if not authToken or not contractId:
         logger.error("[SignalR] Missing authToken or contractId.")
@@ -28,15 +28,20 @@ def setupSignalRConnection(authToken, contractId):
         logger.info("[SignalR] WebSocket is already connected. Skipping initialization.")
         return
 
-    # Start connection
     marketHubUrl = f"https://rtc.topstepx.com/hubs/market?access_token={authToken}"
-    logger.info(f"[SignalR] Connecting to {marketHubUrl}")
-    
     rtc_connection = HubConnectionBuilder()\
         .with_url(marketHubUrl)\
         .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
         .build()
 
+    rtc_connection.start()
+    connection_started = True
+
+    if rtc_connection.state == HubConnectionState.CONNECTED:
+        logger.info("[SignalR] ✅ Connected successfully.")
+    else:
+        logger.error("[SignalR] ❌ Failed to connect.")
+        
     # Event Handlers
     rtc_connection.on_open(lambda: on_open_handler(contractId))
     rtc_connection.on_close(on_close_handler)
