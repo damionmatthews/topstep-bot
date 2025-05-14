@@ -15,6 +15,7 @@ app = FastAPI()
 # --- ENVIRONMENT CONFIG ---
 TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
 ACCOUNT_ID = os.getenv("ACCOUNT_ID")
+CONTRACT_ID = os.getenv("CONTRACT_ID", "CON.F.US.EP.M25")
 SESSION_TOKEN = None
 
 # Strategy storage path
@@ -139,8 +140,10 @@ async def stop_market_data_stream():
         market_data_connection = None
 
 async def startup_event():
+    import logging
+    logger = logging.getLogger(__name__)
     logger.info("Attempting to log in to ProjectX...")
-    async with httpx.AsyncClient() as client:
+     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.topstepx.com/api/Auth/loginKey",
             json={"userName": TOPSTEP_USERNAME, "apiKey": TOPSTEP_API_KEY},
@@ -151,19 +154,21 @@ async def startup_event():
         token = result.get("token")
         if not token:
             raise RuntimeError("No token returned from login")
-
         logger.info("ProjectX Login successful")
-
-        # ✅ Pass required arguments to the streaming function
         setupSignalRConnection(token, CONTRACT_ID)
+
+except httpx.HTTPError as e:
+        logger.error(f"HTTP error during login: {e}")
+        raise
+
+    except Exception as e:
+        logger.error(f"Startup failed: {e}")
+        raise
         
 @app.on_event("startup")
-async def startup_event():
-    await ensure_token()
-    await start_market_data_stream(token, CONTRACT_ID)
-
 async def startup_wrapper():
     await startup_event()
+    await start_market_data_stream(token, CONTRACT_ID)
 
 @app.on_event("shutdown")
 async def shutdown_event():
