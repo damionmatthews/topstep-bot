@@ -18,10 +18,10 @@ shutdown_event = Event()
 # Setup connection
 def setupSignalRConnection(authToken, contractId):
     global rtc_connection, connection_started
-
+    
     if not authToken or not contractId:
-        logger.error("[SignalR] Missing authToken or contractId.")
-        return
+    logger.error("[SignalR] Missing authToken or contractId.")
+    return
 
     if connection_started:
         logger.info("[SignalR] WebSocket is already connected. Skipping initialization.")
