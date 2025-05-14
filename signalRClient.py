@@ -37,10 +37,10 @@ def setupSignalRConnection(authToken, contractId):
     rtc_connection.start()
     connection_started = True
 
-    if rtc_connection.state == HubConnectionState.CONNECTED:
-        logger.info("[SignalR] ✅ Connected successfully.")
-    else:
-        logger.error("[SignalR] ❌ Failed to connect.")
+if rtc_connection.connected:
+    logger.info("[SignalR] ✅ Connected successfully.")
+else:
+    logger.error("[SignalR] ❌ Failed to connect.")
         
     # Event Handlers
     rtc_connection.on_open(lambda: on_open_handler(contractId))
