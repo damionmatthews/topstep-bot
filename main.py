@@ -407,12 +407,12 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
 # --- ORDER FUNCTIONS ---
 async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
     payload = {
-        "accountId": int(ACCOUNT_ID),
-        "contractId": CONTRACT_ID,
-        "type": 2,
-        "side": 0,
-        "size": TRADE_SIZE
-    }
+    "accountId": int(ACCOUNT_ID),
+    "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
+    "type": 2,
+    "side": 0 if signal_direction == "long" else 1,
+    "size": strategy_cfg["TRADE_SIZE"]
+}
     result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
     order_id = result.get("orderId")
     logger.info(f"Order placed with ID: {order_id}")
