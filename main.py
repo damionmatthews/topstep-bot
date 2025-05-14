@@ -115,7 +115,7 @@ async def start_market_data_stream():
 
 # --- EVENT HANDLERS ---
 def fetch_latest_quote():
-    return get_event_data('quote')
+    return get_event_data()
 
 def fetch_latest_trade():
     return get_event_data('trade')
