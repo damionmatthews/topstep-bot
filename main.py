@@ -140,24 +140,29 @@ async def stop_market_data_stream():
         market_data_connection = None
 
 async def startup_event():
-    import logging
-    logger = logging.getLogger(__name__)
     logger.info("Attempting to log in to ProjectX...")
-     async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.topstepx.com/api/Auth/loginKey",
-            json={"userName": TOPSTEP_USERNAME, "apiKey": TOPSTEP_API_KEY},
-            headers={"Content-Type": "application/json"}
-        )
-        response.raise_for_status()
-        result = response.json()
-        token = result.get("token")
-        if not token:
-            raise RuntimeError("No token returned from login")
-        logger.info("ProjectX Login successful")
-        setupSignalRConnection(token, CONTRACT_ID)
 
-except httpx.HTTPError as e:
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.topstepx.com/api/Auth/loginKey",
+                json={"userName": TOPSTEP_USERNAME, "apiKey": TOPSTEP_API_KEY},
+                headers={"Content-Type": "application/json"}
+            )
+            response.raise_for_status()
+            result = response.json()
+            token = result.get("token")
+
+            if not token:
+                logger.error("No token returned from login response.")
+                raise RuntimeError("ProjectX login failed — no token returned.")
+
+            logger.info("ProjectX Login successful")
+
+            # Start the market data stream
+            setupSignalRConnection(token, CONTRACT_ID)
+
+    except httpx.HTTPError as e:
         logger.error(f"HTTP error during login: {e}")
         raise
 
