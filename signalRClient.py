@@ -1,6 +1,5 @@
 # Improved signalRClient.py
 from signalrcore.hub_connection_builder import HubConnectionBuilder
-from signalrcore.hub.base_hub_connection import HubConnectionState
 from signalrcore.transport.websockets.websocket_transport import WebsocketTransport
 from threading import Event
 import logging
@@ -34,25 +33,20 @@ def setupSignalRConnection(authToken, contractId):
         .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
         .build()
 
-    rtc_connection.start()
-    connection_started = True
-
-if rtc_connection.connected:
-    logger.info("[SignalR] ✅ Connected successfully.")
-else:
-    logger.error("[SignalR] ❌ Failed to connect.")
-        
     # Event Handlers
     rtc_connection.on_open(lambda: on_open_handler(contractId))
     rtc_connection.on_close(on_close_handler)
     rtc_connection.on("GatewayQuote", handle_quote_event)
     rtc_connection.on("GatewayTrade", handle_trade_event)
     rtc_connection.on("GatewayDepth", handle_depth_event)
-
-    try:
+    
+   try:
         rtc_connection.start()
         connection_started = True
-        logger.info("[SignalR] ✅ Connected successfully.")
+        if rtc_connection.connected:
+            logger.info("[SignalR] ✅ Connected successfully.")
+        else:
+            logger.error("[SignalR] ❌ Failed to connect.")
     except Exception as e:
         logger.error(f"[SignalR] ❌ Connection error: {e}")
         connection_started = False
