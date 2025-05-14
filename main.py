@@ -489,7 +489,9 @@ async def get_status_endpoint(): # Renamed
         active_strategy_config=strategies.get(current_strategy_name, {}) # Config displayed in UI
     )
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, methods=["GET", "HEAD"]) # Add HEAD here
+async def config_dashboard_with_selection(strategy_selected: str = None):
+    global current_strategy_name, active_strategy_config
 async def config_dashboard_page(): # Renamed for clarity
     strategy_options_html = "".join([f'<option value="{name}" {"selected" if name == current_strategy_name else ""}>{name}</option>' for name in strategies])
     
