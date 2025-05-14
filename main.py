@@ -8,6 +8,8 @@ import json
 import csv
 
 from signalrcore.hub_connection_builder import HubConnectionBuilder
+from signalRClient import setupSignalRConnection, closeSignalRConnection, signalrEvents
+import os
 
 app = FastAPI()
 
@@ -78,6 +80,57 @@ async def get_projectx_token():
     if not SESSION_TOKEN:
         await login_to_projectx()
     return SESSION_TOKEN
+
+async def start_market_data_stream():
+    global market_data_connection
+
+    if market_data_connection:
+        print("🔁 WebSocket already connected. Skipping restart.")
+        return
+
+    # Ensure the session token and contract ID are valid
+    token = os.getenv("SESSION_TOKEN")
+    contract_id = os.getenv("PROJECTX_CONTRACT_ID")
+
+    if not token:
+        print("❌ No valid SESSION_TOKEN found. Aborting WebSocket connection.")
+        return
+
+    if not contract_id:
+        print("❌ No valid PROJECTX_CONTRACT_ID found. Aborting WebSocket connection.")
+        return
+
+    print("🌐 Starting WebSocket connection to market data stream...")
+    
+    # Attempt to connect
+    try:
+        setupSignalRConnection(token, contract_id)
+        market_data_connection = True
+        print("✅ Market data stream started successfully.")
+    except Exception as e:
+        print(f"❌ Failed to start market data stream: {e}")
+        market_data_connection = None
+
+    # Event listeners
+    signalrEvents.on('quote', handle_quote_event)
+    signalrEvents.on('trade', handle_trade_event)
+    signalrEvents.on('depth', handle_depth_event)
+
+def handle_quote_event(data):
+    print(f"[Quote Event] Received Data: {data}")
+
+def handle_trade_event(data):
+    print(f"[Trade Event] Received Data: {data}")
+
+def handle_depth_event(data):
+    print(f"[Depth Event] Received Data: {data}")
+
+async def stop_market_data_stream():
+    global market_data_connection
+    if market_data_connection:
+        print("🔌 Stopping market data stream...")
+        closeSignalRConnection()
+        market_data_connection = None
 
 @app.on_event("startup")
 async def startup_event():
