@@ -14,6 +14,7 @@ ACCOUNT_ID = os.getenv("ACCOUNT_ID")
 
 # Strategy storage path
 STRATEGY_PATH = "strategies.json"
+TRADE_LOG_PATH = "trade_log.json"
 
 # Load or initialize strategies
 if os.path.exists(STRATEGY_PATH):
@@ -60,6 +61,25 @@ def save_strategies():
     with open(STRATEGY_PATH, "w") as f:
         json.dump(strategies, f, indent=2)
 
+def log_trade(event: str, data: dict):
+    entry = {"event": event, "timestamp": datetime.utcnow().isoformat(), **data}
+    if os.path.exists(TRADE_LOG_PATH):
+        with open(TRADE_LOG_PATH, "r") as f:
+            log = json.load(f)
+    else:
+        log = []
+    log.append(entry)
+    with open(TRADE_LOG_PATH, "w") as f:
+        json.dump(log, f, indent=2)
+
+async def get_current_price(symbol: str) -> float:
+    url = f"https://gateway-api.projectx.com/api/MarketData/last?symbol={symbol}"
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers={"Authorization": f"Bearer {TOPSTEP_API_KEY}"})
+        response.raise_for_status()
+        data = response.json()
+        return data.get("last", 0.0)
+
 async def place_order(direction: str):
     side = "buy" if direction == "long" else "sell"
     async with httpx.AsyncClient() as client:
@@ -77,21 +97,21 @@ async def place_order(direction: str):
         response.raise_for_status()
         return response.json()
 
-async def check_and_close_trade(current_price: float):
+async def check_and_close_trade():
     global trade_active, entry_price, daily_pnl, current_signal
     if not trade_active or entry_price is None:
         return
 
+    current_price = await get_current_price(config["CONTRACT_SYMBOL"])
     pnl = (current_price - entry_price) * (1 if current_signal == 'long' else -1) * 20
     if pnl >= config["MAX_TRADE_PROFIT"] or pnl <= config["MAX_TRADE_LOSS"]:
         await close_position()
         daily_pnl += pnl
         trade_active = False
-        print(f"Trade exited at {current_price}, PnL: {pnl}")
+        log_trade("exit", {"exit_price": current_price, "pnl": pnl, "signal": current_signal})
 
     if daily_pnl >= config["MAX_DAILY_PROFIT"] or daily_pnl <= config["MAX_DAILY_LOSS"]:
         trade_active = False
-        print("Trading halted for the day")
 
 async def close_position():
     side = "sell" if current_signal == "long" else "buy"
@@ -126,26 +146,21 @@ async def receive_alert_strategy(strategy: str, alert: SignalAlert):
     if trade_active:
         return {"status": "ignored", "reason": "trade already active"}
 
-    print(f"[{strategy}] Received {alert.signal} signal for {alert.ticker} at {alert.time}")
-
     try:
         result = await place_order(alert.signal)
         entry_price = result.get("fillPrice", 0.0)
         trade_active = True
         current_signal = alert.signal
         trade_time = datetime.utcnow()
+        log_trade("entry", {"strategy": strategy, "entry_price": entry_price, "signal": current_signal})
         return {"status": "trade placed", "entry_price": entry_price}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
 @app.get("/check")
 async def check_price():
-    if not trade_active:
-        return {"status": "no active trade"}
-
-    current_price = entry_price + 25
-    await check_and_close_trade(current_price)
-    return {"status": "checked", "price": current_price}
+    await check_and_close_trade()
+    return {"status": "checked"}
 
 @app.get("/status", response_model=StatusResponse)
 async def get_status():
@@ -156,84 +171,3 @@ async def get_status():
         current_signal=current_signal,
         daily_pnl=daily_pnl
     )
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard():
-    strategy_options = "".join([f'<option value="{name}" {"selected" if name == current_strategy else ""}>{name}</option>' for name in strategies])
-    rows = "".join([f"<tr><td>{name}</td><td><a href='/delete?strategy={name}'>Delete</a> | <a href='/clone?strategy={name}'>Clone</a></td></tr>" for name in strategies])
-    current = strategies[current_strategy]
-    html_content = f"""
-    <html>
-    <head><title>Trading Bot Dashboard</title></head>
-    <body>
-        <h1>Topstep Bot Dashboard</h1>
-        <form action="/config" method="post">
-            <label>Strategy: <select name="strategy">{strategy_options}</select></label><br>
-            <label>Contract Symbol: <input name="symbol" value="{current['CONTRACT_SYMBOL']}" /></label><br>
-            <label>Trade Size: <input name="size" type="number" value="{current['TRADE_SIZE']}" /></label><br>
-            <label>Max Trade Loss: <input name="max_trade_loss" type="number" value="{current['MAX_TRADE_LOSS']}" /></label><br>
-            <label>Max Trade Profit: <input name="max_trade_profit" type="number" value="{current['MAX_TRADE_PROFIT']}" /></label><br>
-            <label>Max Daily Loss: <input name="max_daily_loss" type="number" value="{current['MAX_DAILY_LOSS']}" /></label><br>
-            <label>Max Daily Profit: <input name="max_daily_profit" type="number" value="{current['MAX_DAILY_PROFIT']}" /></label><br>
-            <button type="submit">Update Config</button>
-        </form>
-        <h2>Strategies</h2>
-        <table border='1'><tr><th>Name</th><th>Actions</th></tr>{rows}</table>
-        <hr>
-        <p><strong>Trade Active:</strong> {trade_active}</p>
-        <p><strong>Entry Price:</strong> {entry_price}</p>
-        <p><strong>Trade Time:</strong> {trade_time}</p>
-        <p><strong>Current Signal:</strong> {current_signal}</p>
-        <p><strong>Daily PnL:</strong> {daily_pnl}</p>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
-
-@app.post("/config")
-async def update_config(
-    strategy: str = Form(...),
-    symbol: str = Form(...),
-    size: int = Form(...),
-    max_trade_loss: float = Form(...),
-    max_trade_profit: float = Form(...),
-    max_daily_loss: float = Form(...),
-    max_daily_profit: float = Form(...)
-):
-    global config, current_strategy
-    if strategy not in strategies:
-        strategies[strategy] = {}
-    strategies[strategy].update({
-        "CONTRACT_SYMBOL": symbol,
-        "TRADE_SIZE": size,
-        "MAX_TRADE_LOSS": max_trade_loss,
-        "MAX_TRADE_PROFIT": max_trade_profit,
-        "MAX_DAILY_LOSS": max_daily_loss,
-        "MAX_DAILY_PROFIT": max_daily_profit
-    })
-    save_strategies()
-    current_strategy = strategy
-    config = strategies[current_strategy]
-    return RedirectResponse(url="/", status_code=303)
-
-@app.get("/delete")
-async def delete_strategy(strategy: str):
-    global current_strategy, config
-    if strategy in strategies and strategy != "default":
-        del strategies[strategy]
-        save_strategies()
-        current_strategy = "default"
-        config = strategies[current_strategy]
-    return RedirectResponse(url="/", status_code=303)
-
-@app.get("/clone")
-async def clone_strategy(strategy: str):
-    if strategy in strategies:
-        new_name = f"{strategy}_copy"
-        count = 1
-        while new_name in strategies:
-            new_name = f"{strategy}_copy{count}"
-            count += 1
-        strategies[new_name] = dict(strategies[strategy])
-        save_strategies()
-    return RedirectResponse(url="/", status_code=303)
