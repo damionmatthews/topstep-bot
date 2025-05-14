@@ -72,7 +72,7 @@ current_trade_id = None # To track the ProjectX orderId
 
 # --- ProjectX API Session Token ---
 projectx_session_token = None
-PROJECTX_BASE_URL = "https://gateway-api-demo.s2f.projectx.com/api" # Use demo first!
+PROJECTX_BASE_URL = "https://gateway-api.projectx.com/api/Auth/loginKey/" # Use demo first!
 # PROJECTX_BASE_URL = "https://api.topstepx.com/api" # Production
 
 # --- DATA MODELS ---
