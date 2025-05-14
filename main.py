@@ -177,7 +177,6 @@ async def startup_event():
 @app.on_event("startup")
 async def startup_wrapper():
     await startup_event()
-    await start_market_data_stream(token, CONTRACT_ID)
 
 @app.on_event("shutdown")
 async def shutdown_event():
