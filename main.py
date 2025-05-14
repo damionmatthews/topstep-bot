@@ -328,7 +328,7 @@ async def close_position():
 async def on_startup():
     await get_projectx_token()
     if SESSION_TOKEN:
-        start_market_data_stream(SESSION_TOKEN, "CON.F.US.EP.M25")  # Replace with valid contract ID
+        await start_market_data_stream()
     else:
         print("⚠️ Cannot start WebSocket: SESSION_TOKEN is missing")
         
