@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime
@@ -9,6 +9,7 @@ import csv
 from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data
 import logging
 import os
+import asyncio
 
 app = FastAPI()
 
@@ -175,6 +176,17 @@ async def startup_event():
 @app.on_event("startup")
 async def startup_wrapper():
     await startup_event()
+
+async def launch_background_check_loop():
+    asyncio.create_task(trade_status_check_loop())
+
+async def trade_status_check_loop():
+    while True:
+        try:
+            await check_trade_status_endpoint()
+        except Exception as e:
+            logger.error(f"[Trade Loop] Error in periodic check: {e}")
+        await asyncio.sleep(30)  # ⏱ Check every 30 seconds
 
 @app.on_event("shutdown")
 async def shutdown_event():
