@@ -422,7 +422,7 @@ async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
     if not order_id:
         raise ValueError(f"Order placement failed, response: {result}")
 
-    logger.info(f"Order placed with ID: {order_id}")
+    logger.info(f"Placing order with payload: {payload}")
     return {"success": True, "orderId": order_id}
 
 async def poll_order_fill(order_id: int):
