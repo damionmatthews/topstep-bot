@@ -220,30 +220,38 @@ async def close_position():
 # --- Start SignalR WebSocket connection ---
 def start_market_data_stream(token, contract_id):
     hub_url = f"https://rtc.topstepx.com/hubs/market?access_token={token}"
-    connection = HubConnectionBuilder()\
-        .with_url(hub_url)\
-        .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
-        .build()
+    try:
+        connection = HubConnectionBuilder()\
+            .with_url(hub_url)\
+            .with_automatic_reconnect({"keep_alive_interval": 10, "reconnect_interval": 5})\
+            .build()
 
-    def handle_trade(args):
-        print("TRADE:", args)
+        def handle_trade(args):
+            print("TRADE:", args)
 
-    def handle_quote(args):
-        print("QUOTE:", args)
+        def handle_quote(args):
+            print("QUOTE:", args)
 
-    connection.on("GatewayTrade", handle_trade)
-    connection.on("GatewayQuote", handle_quote)
-    connection.start()
-    connection.send("SubscribeContractTrades", [contract_id])
-    connection.send("SubscribeContractQuotes", [contract_id])
-    return connection
-    
+        connection.on("GatewayTrade", handle_trade)
+        connection.on("GatewayQuote", handle_quote)
+        connection.start()
+        connection.send("SubscribeContractTrades", [contract_id])
+        connection.send("SubscribeContractQuotes", [contract_id])
+        print("✅ WebSocket connection established and subscribed")
+        return connection
+    except Exception as e:
+        print("❌ WebSocket connection failed:", e)
+        return None
+        
 # Call on startup
 @app.on_event("startup")
 async def on_startup():
     await get_projectx_token()
-    start_market_data_stream(SESSION_TOKEN, "CON.F.US.EP.M25")  # Replace with actual contract ID
-
+    if SESSION_TOKEN:
+        start_market_data_stream(SESSION_TOKEN, "CON.F.US.EP.M25")  # Replace with actual contract ID
+    else:
+        print("⚠️ Cannot start WebSocket: SESSION_TOKEN is missing")
+        
 async def projectx_api_request(method: str, endpoint: str, payload: dict = None):
     token = await get_projectx_token()
     if not token:
