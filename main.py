@@ -640,6 +640,21 @@ async def get_status_endpoint(): # Renamed
         active_strategy_config=strategies.get(current_strategy_name, {}) # Config displayed in UI
     )
 
+@app.get("/debug_account_info")
+async def debug_account_info():
+    try:
+        token = await get_projectx_token()
+        accounts_response = await projectx_api_request("GET", "/api/Account/getAccounts")
+        contracts_response = await projectx_api_request("POST", "/api/Contract/search", payload={"live": True, "searchText": "ENQ"})
+
+        return {
+            "session_token": token,
+            "accounts": accounts_response,
+            "sample_contract_search_ENQ": contracts_response.get("contracts", [])
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/", response_class=HTMLResponse)
 async def config_dashboard_with_selection_get(strategy_selected: str = None):
     global current_strategy_name
@@ -793,7 +808,6 @@ async def config_dashboard_with_selection(strategy_selected: str = None):
         active_strategy_config = strategies[current_strategy_name]
     # If no strategy_selected or invalid, it defaults to the global current_strategy_name
     return await config_dashboard_page()
-
 
 @app.post("/update_strategy_config") # Renamed
 async def update_strategy_config_action( # Renamed
