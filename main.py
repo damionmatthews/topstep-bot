@@ -421,24 +421,24 @@ async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
 
     logger.info(f"[Order Attempt] Sending order with payload: {json.dumps(payload)}")
 
-try:
-    result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
-    logger.info(f"[Order Response] {result}")
+    try:
+        result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
+        logger.info(f"[Order Response] {result}")
 
-    if not result:
-        raise ValueError("No response received from ProjectX order placement.")
+        if not result:
+            raise ValueError("No response received from ProjectX order placement.")
 
-    order_id = result.get("orderId")
-    if not order_id or not result.get("success", False):
-        error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
-        raise ValueError(f"Order placement failed, response: {error_msg}")
+        order_id = result.get("orderId")
+        if not order_id or not result.get("success", False):
+            error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
+            raise ValueError(f"Order placement failed, response: {error_msg}")
 
-    logger.info(f"✅ Order placed successfully. Order ID: {order_id}")
-    return {"success": True, "orderId": order_id}
+        logger.info(f"✅ Order placed successfully. Order ID: {order_id}")
+        return {"success": True, "orderId": order_id}
 
-except Exception as e:
-    logger.error(f"❌ Exception during order placement: {str(e)}")
-    raise
+    except Exception as e:
+        logger.error(f"❌ Exception during order placement: {str(e)}")
+        raise
 
 async def poll_order_fill(order_id: int):
     max_attempts = 10
