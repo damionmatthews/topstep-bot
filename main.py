@@ -690,7 +690,10 @@ async def contract_search_page(search_query: str = ""):
             }}
         }}
     </script>
-    </body></html>
+    </body></html>"""
+    
+    return HTMLResponse(content=html)
+
     
 @app.head("/", response_class=HTMLResponse)
 async def config_dashboard_with_selection_head(strategy_selected: str = None):
