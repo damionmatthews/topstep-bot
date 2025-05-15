@@ -12,3 +12,5 @@ services:
         value: "473"
       - key: TOPSTEP_USERNAME
         value: dcminsf
+      - key: CONTRACT_ID
+        value: CON.F.US.ENQ.M25
