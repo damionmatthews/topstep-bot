@@ -430,7 +430,8 @@ async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
 
         order_id = result.get("orderId")
         if not order_id or not result.get("success", False):
-            raise ValueError(f"Order placement failed, response: {result}")
+    error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
+    raise ValueError(f"Order placement failed, response: {error_msg}")
 
         logger.info(f"✅ Order placed successfully. Order ID: {order_id}")
         return {"success": True, "orderId": order_id}
