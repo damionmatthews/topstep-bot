@@ -9,7 +9,7 @@ services:
       - key: TOPSTEP_API_KEY
         value: 4s/YUAhW2bXdG/TyNL4v4vd3kybtMGVLAx+mX4D0iXU=
       - key: ACCOUNT_ID
-        value: "473"
+        value: 473
       - key: TOPSTEP_USERNAME
         value: dcminsf
       - key: CONTRACT_ID
