@@ -377,14 +377,13 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
     }
 
     # Decide correct base URL
-if endpoint.startswith("/api/Order") or endpoint.startswith("/api/Account") or endpoint.startswith("/api/Position"):
-    base_url = API_BASE_GATEWAY
-else:
-    base_url = API_BASE_AUTH
+    if endpoint.startswith("/api/Order") or endpoint.startswith("/api/Account") or endpoint.startswith("/api/Position"):
+        base_url = API_BASE_GATEWAY
+    else:
+        base_url = API_BASE_AUTH
 
     async with httpx.AsyncClient() as client:
         url = f"{base_url}{endpoint}"
-
         try:
             if method.upper() == "POST":
                 response = await client.post(url, json=payload, headers=headers)
@@ -397,10 +396,8 @@ else:
                 logger.warning("Token expired or unauthorized. Attempting re-login.")
                 await login_to_projectx()
                 token = await get_projectx_token()
-                if not token:
-                    raise Exception("Re-authentication failed")
-
                 headers["Authorization"] = f"Bearer {token}"
+
                 if method.upper() == "POST":
                     response = await client.post(url, json=payload, headers=headers)
                 elif method.upper() == "GET":
@@ -408,12 +405,14 @@ else:
 
             response.raise_for_status()
             return response.json()
+
         except httpx.HTTPStatusError as http_err:
             logger.error(f"HTTP error {http_err.response.status_code}: {http_err.response.text}")
             raise
         except Exception as e:
             logger.error(f"Unhandled API error: {str(e)}")
             raise
+
 
 # --- ORDER FUNCTIONS ---
 async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
