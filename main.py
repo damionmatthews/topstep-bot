@@ -376,14 +376,7 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
         "Accept": "application/json"
     }
 
-    # Choose the right base URL
-    if endpoint.startswith("/api/Order") or endpoint.startswith("/api/Account") or endpoint.startswith("/api/Position"):
-        base_url = API_BASE_GATEWAY
-    else:
-        base_url = API_BASE_AUTH
-
-    # Safe URL construction
-    url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+    url = f"https://api.topstepx.com{endpoint}"
 
     logger.info(f"[HTTP] {method.upper()} {url}")
 
@@ -396,18 +389,7 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
             else:
                 raise ValueError("Unsupported HTTP method")
 
-            # Handle token expiration
-            if response.status_code == 401:
-                logger.warning("Token expired. Attempting re-login...")
-                await login_to_projectx()
-                token = await get_projectx_token()
-                headers["Authorization"] = f"Bearer {token}"
-
-                if method.upper() == "POST":
-                    response = await client.post(url, json=payload, headers=headers)
-                elif method.upper() == "GET":
-                    response = await client.get(url, headers=headers)
-
+            logger.info(f"HTTP Request: {method.upper()} {url} \"{response.status_code} {response.reason_phrase}\"")
             response.raise_for_status()
             return response.json()
 
@@ -417,6 +399,7 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
         except Exception as e:
             logger.error(f"Unhandled API error: {str(e)}")
             raise
+
 
 
 # --- ORDER FUNCTIONS ---
