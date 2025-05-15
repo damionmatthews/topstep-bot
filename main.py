@@ -518,7 +518,6 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
             print(f"Error closing position: {e}")
             log_event(ALERT_LOG_PATH, {"event": "Error Closing Position", "strategy": strategy_name_of_trade, "error": str(e)})
 
-
     # Check daily PnL limits (this global daily_pnl needs to be strategy-specific too)
     if daily_pnl >= active_strategy_config["MAX_DAILY_PROFIT"] or daily_pnl <= active_strategy_config["MAX_DAILY_LOSS"]:
         if trade_active: # If a trade is still active when daily limit hit
@@ -565,30 +564,16 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
     print(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time}")
 
     try:
-        # Place the order using the specific strategy's config
         result = await place_order_projectx(alert.signal, strategy_cfg_for_trade)
         
         if result.get("success") and result.get("orderId"):
             current_trade_id = result["orderId"]
-            # TODO: Need to fetch actual fillPrice. This is a placeholder.
-            # For now, assume immediate fill at some simulated price or known level.
-            # This part is CRITICAL and needs to be replaced with real fill price logic.
-            # Let's assume we can't get fill price immediately.
-            # We'd need to poll or use websockets. For now, we'll simulate:
             simulated_entry_price = 20900.00 # Placeholder - GET REAL PRICE
-            
-            # Fetch current market price to use as entry for now
-            # This is still not ideal as it's not the fill price
-            # contract_id_for_price = strategy_cfg_for_trade.get("PROJECTX_CONTRACT_ID", "N/A")
-            # fetched_price_as_entry = await fetch_current_price(contract_id_for_price)
-            # entry_price = fetched_price_as_entry if fetched_price_as_entry is not None else simulated_entry_price
-            
             entry_price = simulated_entry_price # MAJOR TODO: Replace with actual fill price logic
 
             trade_active = True
             current_signal_direction = alert.signal
             trade_time = datetime.utcnow()
-            # Store which strategy initiated this trade
             global strategy_that_opened_trade 
             strategy_that_opened_trade = strategy_webhook_name
 
@@ -617,10 +602,6 @@ async def check_trade_status_endpoint():
     if not strategy_that_opened_trade:
         return {"status": "error", "reason": "Trade active but opening strategy unknown."}
 
-    # This is where you'd implement the actual price fetching and PnL check
-    # For demonstration, we call check_and_close_active_trade
-    # In a real scenario, this might be triggered by a scheduler or an internal loop.
-    # And it MUST use real market data.
     await check_and_close_active_trade(strategy_that_opened_trade)
     
     if trade_active : # If still active after check
@@ -719,9 +700,8 @@ async def config_dashboard_with_selection_head(strategy_selected: str = None):
     # FastAPI handles sending only headers for HEAD requests when the GET handler returns a Response
     return await config_dashboard_page()
 
-# Make sure your config_dashboard_page function is defined correctly
-async def config_dashboard_page(): # This is the function that generates the actual HTML
-    global current_strategy_name # This global is important for it to pick up the selection
+async def config_dashboard_page():
+    global current_strategy_name
     strategy_options_html = "".join([f'<option value="{name}" {"selected" if name == current_strategy_name else ""}>{name}</option>' for name in strategies])
     
     strategy_rows_html = ""
@@ -738,7 +718,6 @@ async def config_dashboard_page(): # This is the function that generates the act
     current_signal_display = current_signal_direction if current_signal_direction else "None"
     daily_pnl_display = f"{daily_pnl:.2f}"
     strategy_opened_trade_display = strategy_that_opened_trade if strategy_that_opened_trade else "N/A"
-
 
     html_content = f"""
     <html><head><title>Trading Bot Dashboard</title>{COMMON_CSS}
@@ -917,7 +896,6 @@ async def toggle_trading_action_endpoint():
     log_event(ALERT_LOG_PATH, {"event": "Trading Status Changed", "status": status_message})
     return RedirectResponse(url="/toggle_trading_status", status_code=303)
 
-
 @app.get("/logs/trades", response_class=HTMLResponse)
 async def trade_log_view_page():
     if os.path.exists(TRADE_LOG_PATH):
@@ -1023,4 +1001,4 @@ async def alert_log_view_page():
     <h1>Alert History</h1>
     <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
     <table><thead><tr><th>Time</th><th>Strategy</th><th>Signal</th><th>Ticker</th><th>Event</th><th>Error</th></tr></thead><tbody>{rows_html}</tbody></table>
-    </div></body></html>""")
+    </div></body></html>"""
