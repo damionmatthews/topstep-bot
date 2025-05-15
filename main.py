@@ -437,8 +437,16 @@ async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
     logger.info(f"[Order Attempt] Sending order with payload: {json.dumps(payload)}")
 
     try:
-        result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
-        logger.info(f"[Order Response] Raw JSON: {result}")
+    result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
+
+    # Enhanced diagnostics
+    logger.info(f"[Order Response] Raw JSON: {result}")
+    
+    # Note: This is only accessible if you return the raw response too.
+    # You can temporarily comment this out or update projectx_api_request to return (result, response) if needed.
+    # logger.info(f"[Order Response Body] {response.text}")
+    # logger.info(f"[Order HTTP Status] {response.status_code}")
+    # logger.info(f"[Order Headers] {response.headers}")
 
 # Extra diagnostics
 if hasattr(response, 'text'):
