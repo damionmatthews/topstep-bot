@@ -15,7 +15,7 @@ import asyncio
 app = FastAPI()
 
 # --- ENVIRONMENT CONFIG ---
-ACCOUNT_ID = os.getenv("ACCOUNT_ID")
+ACCOUNT_ID = 7715028
 CONTRACT_ID = os.getenv("CONTRACT_ID")
 SESSION_TOKEN = None
 
