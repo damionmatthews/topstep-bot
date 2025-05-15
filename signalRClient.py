@@ -1,6 +1,7 @@
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 import logging
 import asyncio
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,14 @@ trade_data = []
 depth_data = []
 
 # Callback that will be set by main.py to trigger trade checks
+def start_background_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+background_loop = asyncio.new_event_loop()
+t = threading.Thread(target=start_background_loop, args=(background_loop,), daemon=True)
+t.start()
+
 trade_callback = None
 
 def register_trade_callback(cb):
@@ -74,11 +83,7 @@ def handle_trade_event(args):
         trade_data.append(args)
         logger.debug(f"[Trade] {args}")
         if trade_callback:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(trade_callback(args))
-            else:
-                loop.run_until_complete(trade_callback(args))
+            asyncio.run_coroutine_threadsafe(trade_callback(args), background_loop)
     except Exception as e:
         logger.error(f"[SignalR] Trade handler error: {e}")
 
