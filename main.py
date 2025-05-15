@@ -296,7 +296,7 @@ async def place_order(direction: str):
     side = "buy" if direction == "long" else "sell"
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://gateway-api.projectx.com/api/orders",
+            "https://gateway.projectx.com/api/orders",
             headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
             json={
                 "accountId": ACCOUNT_ID,
@@ -330,7 +330,7 @@ async def close_position():
     side = "sell" if current_signal == "long" else "buy"
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://gateway-api.projectx.com/api/orders",
+            "https://gateway.projectx.com/api/orders",
             headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
             json={
                 "accountId": ACCOUNT_ID,
