@@ -1,6 +1,8 @@
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 from threading import Thread
 import logging
+from main import check_and_close_active_trade, strategy_that_opened_trade
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,15 @@ def get_event_data():
         "depth": depth_data[-100:]
     }
 
+def handle_trade_event(args):
+    try:
+        trade_data.append(args)
+        logger.debug(f"[Trade] {args}")
+        if strategy_that_opened_trade:
+            asyncio.create_task(check_and_close_active_trade(strategy_that_opened_trade))
+    except Exception as e:
+        logger.error(f"[SignalR] Trade handler error: {e}")
+        
 # Module exports
 __all__ = [
     "setupSignalRConnection",
