@@ -300,7 +300,7 @@ async def place_order(direction: str):
             headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
             json={
                 "accountId": ACCOUNT_ID,
-                "symbol": config["CONTRACT_SYMBOL"],
+                "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
                 "qty": config["TRADE_SIZE"],
                 "side": side,
                 "type": "market"
@@ -334,7 +334,7 @@ async def close_position():
             headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
             json={
                 "accountId": ACCOUNT_ID,
-                "symbol": strategy_cfg["CONTRACT_SYMBOL"],
+                "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
                 "qty": strategy_cfg["TRADE_SIZE"],
                 "side": side,
                 "type": "market"
