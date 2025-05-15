@@ -406,24 +406,38 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
 
 # --- ORDER FUNCTIONS ---
 async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
+    if "PROJECTX_CONTRACT_ID" not in strategy_cfg or not strategy_cfg["PROJECTX_CONTRACT_ID"]:
+        raise ValueError("PROJECTX_CONTRACT_ID is missing or empty in strategy configuration.")
+    if not ACCOUNT_ID:
+        raise ValueError("ACCOUNT_ID environment variable is not set.")
+
     payload = {
         "accountId": int(ACCOUNT_ID),
         "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
-        "type": 2,
+        "type": 2,  # Market order
         "side": 0 if signal_direction == "long" else 1,
         "size": strategy_cfg["TRADE_SIZE"]
     }
 
-    result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
-    if not result:
-        raise ValueError("No response received from ProjectX order placement.")
+    logger.info(f"[Order Attempt] Sending order with payload: {json.dumps(payload)}")
 
-    order_id = result.get("orderId")
-    if not order_id:
-        raise ValueError(f"Order placement failed, response: {result}")
+    try:
+        result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
+        logger.info(f"[Order Response] {result}")
 
-    logger.info(f"Placing order with payload: {payload}")
-    return {"success": True, "orderId": order_id}
+        if not result:
+            raise ValueError("No response received from ProjectX order placement.")
+
+        order_id = result.get("orderId")
+        if not order_id or not result.get("success", False):
+            raise ValueError(f"Order placement failed, response: {result}")
+
+        logger.info(f"✅ Order placed successfully. Order ID: {order_id}")
+        return {"success": True, "orderId": order_id}
+
+    except Exception as e:
+        logger.error(f"❌ Exception during order placement: {str(e)}")
+        raise
 
 async def poll_order_fill(order_id: int):
     max_attempts = 10
