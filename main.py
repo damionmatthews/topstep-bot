@@ -167,7 +167,11 @@ async def startup_event():
             logger.info("ProjectX Login successful")
 
             # Start the market data stream
-            setupSignalRConnection(token, CONTRACT_ID)
+            contract_id = os.getenv("CONTRACT_ID") or "CON.F.US.EP.M25"
+            if not token or not contract_id:
+            logger.error("[SignalR] Missing authToken or contractId.")
+    else:
+    setupSignalRConnection(token, contract_id)
 
     except httpx.HTTPError as e:
         logger.error(f"HTTP error during login: {e}")
