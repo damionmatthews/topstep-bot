@@ -376,14 +376,18 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
         "Accept": "application/json"
     }
 
-    # Decide correct base URL
+    # Choose the right base URL
     if endpoint.startswith("/api/Order") or endpoint.startswith("/api/Account") or endpoint.startswith("/api/Position"):
         base_url = API_BASE_GATEWAY
     else:
         base_url = API_BASE_AUTH
 
+    # Safe URL construction
+    url = f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+
+    logger.info(f"[HTTP] {method.upper()} {url}")
+
     async with httpx.AsyncClient() as client:
-        url = f"{base_url}{endpoint}"
         try:
             if method.upper() == "POST":
                 response = await client.post(url, json=payload, headers=headers)
@@ -392,8 +396,9 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
             else:
                 raise ValueError("Unsupported HTTP method")
 
+            # Handle token expiration
             if response.status_code == 401:
-                logger.warning("Token expired or unauthorized. Attempting re-login.")
+                logger.warning("Token expired. Attempting re-login...")
                 await login_to_projectx()
                 token = await get_projectx_token()
                 headers["Authorization"] = f"Bearer {token}"
