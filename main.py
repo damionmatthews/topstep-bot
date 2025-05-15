@@ -21,7 +21,7 @@ SESSION_TOKEN = None
 
 # Strategy storage path
 API_BASE_AUTH = "https://api.topstepx.com"
-API_BASE_GATEWAY = "https://gateway.projectx.com"
+API_BASE_GATEWAY = "https://api.topstepx.com"
 STRATEGY_PATH = "strategies.json"
 STRATEGIES_FILE_PATH = "strategies.json"  # Or wherever your strategies are stored
 def save_strategies_to_file():
@@ -296,7 +296,7 @@ async def place_order(direction: str):
     side = "buy" if direction == "long" else "sell"
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://gateway.projectx.com/api/orders",
+            "https://api.topstepx.com/api/orders",
             headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
             json={
                 "accountId": ACCOUNT_ID,
@@ -330,7 +330,7 @@ async def close_position():
     side = "sell" if current_signal == "long" else "buy"
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://gateway.projectx.com/api/orders",
+            "https://api.topstepx.com/api/orders",
             headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
             json={
                 "accountId": ACCOUNT_ID,
@@ -350,7 +350,7 @@ async def on_execution_message(message):
 async def start_websocket_listener():
     global hub_connection
     hub_connection = HubConnectionBuilder()\
-        .with_url("https://gateway.projectx.com/signalr")\
+        .with_url("https://api.topstepx.com/signalr")\
         .build()
     hub_connection.on("GatewayExecution", on_execution_message)
     await hub_connection.start()
