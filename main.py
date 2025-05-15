@@ -7,7 +7,7 @@ import httpx
 import os
 import json
 import csv
-from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data, HubConnectionBuilder
+from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data, HubConnectionBuilder, register_trade_callback
 import logging
 import os
 import asyncio
@@ -180,6 +180,13 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         raise
+
+async def trade_event_handler(args):
+    global strategy_that_opened_trade
+    if strategy_that_opened_trade:
+        await check_and_close_active_trade(strategy_that_opened_trade)
+
+register_trade_callback(trade_event_handler)
 
 @app.on_event("startup")
 async def startup_wrapper():
@@ -553,61 +560,88 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
         # Note: This halts based on current_strategy_name's config, but daily_pnl is global. Needs refinement.
 
 # --- MAIN ENDPOINTS ---
+strategy_that_opened_trade = None  # Global to track which strategy opened the current trade
+
 @app.post("/webhook/{strategy_webhook_name}")
 async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert):
-    global trade_active, entry_price, current_signal_direction, trade_time, daily_pnl, active_strategy_config, current_trade_id
-    
-    log_event(ALERT_LOG_PATH, {"event": "Webhook Received", "strategy": strategy_webhook_name, "signal": alert.signal, "ticker": alert.ticker})
+    global trade_active, entry_price, current_signal_direction, trade_time, daily_pnl, active_strategy_config, current_trade_id, strategy_that_opened_trade
+
+    log_event(ALERT_LOG_PATH, {
+        "event": "Webhook Received",
+        "strategy": strategy_webhook_name,
+        "signal": alert.signal,
+        "ticker": alert.ticker
+    })
 
     if strategy_webhook_name not in strategies:
         return {"status": "error", "reason": f"Strategy '{strategy_webhook_name}' not found"}
 
     # Load the specific strategy config for this webhook
     strategy_cfg_for_trade = strategies[strategy_webhook_name]
-    
-    # TODO: Daily PNL should be tracked per strategy. This is a simplification.
+
     if daily_pnl >= strategy_cfg_for_trade["MAX_DAILY_PROFIT"] or daily_pnl <= strategy_cfg_for_trade["MAX_DAILY_LOSS"]:
-        log_event(ALERT_LOG_PATH, {"event": "Trading Halted (Daily Limit)", "strategy": strategy_webhook_name})
+        log_event(ALERT_LOG_PATH, {
+            "event": "Trading Halted (Daily Limit)",
+            "strategy": strategy_webhook_name
+        })
         return {"status": "halted", "reason": f"daily limit reached for strategy {strategy_webhook_name}"}
 
-    if trade_active: # Global trade_active; means bot is in *any* trade.
-        log_event(ALERT_LOG_PATH, {"event": "Trade Ignored (Already Active)", "strategy": strategy_webhook_name})
+    if trade_active:
+        log_event(ALERT_LOG_PATH, {
+            "event": "Trade Ignored (Already Active)",
+            "strategy": strategy_webhook_name
+        })
         return {"status": "ignored", "reason": "trade already active (globally)"}
 
     print(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time}")
 
     try:
         result = await place_order_projectx(alert.signal, strategy_cfg_for_trade)
-        
+
         if result.get("success") and result.get("orderId"):
             current_trade_id = result["orderId"]
-            simulated_entry_price = 20900.00 # Placeholder - GET REAL PRICE
-            entry_price = simulated_entry_price # MAJOR TODO: Replace with actual fill price logic
+            simulated_entry_price = 20900.00  # Placeholder
+            entry_price = simulated_entry_price
 
             trade_active = True
             current_signal_direction = alert.signal
             trade_time = datetime.utcnow()
-            global strategy_that_opened_trade 
             strategy_that_opened_trade = strategy_webhook_name
 
             log_event(TRADE_LOG_PATH, {
-                "event": "entry", "strategy": strategy_webhook_name, "signal": alert.signal, 
-                "ticker": alert.ticker, "entry_price_estimate": entry_price, # Mark as estimate
+                "event": "entry",
+                "strategy": strategy_webhook_name,
+                "signal": alert.signal,
+                "ticker": alert.ticker,
+                "entry_price_estimate": entry_price,
                 "projectx_order_id": current_trade_id
             })
-            return {"status": "trade placed (simulated entry)", "projectx_order_id": current_trade_id, "entry_price_estimate": entry_price}
+
+            return {
+                "status": "trade placed (simulated entry)",
+                "projectx_order_id": current_trade_id,
+                "entry_price_estimate": entry_price
+            }
         else:
             error_msg = result.get("errorMessage", "Unknown error placing order.")
-            log_event(ALERT_LOG_PATH, {"event": "Order Placement Failed", "strategy": strategy_webhook_name, "error": error_msg, "response": result})
+            log_event(ALERT_LOG_PATH, {
+                "event": "Order Placement Failed",
+                "strategy": strategy_webhook_name,
+                "error": error_msg,
+                "response": result
+            })
             return {"status": "error", "reason": f"Failed to place order: {error_msg}"}
 
     except Exception as e:
-        log_event(ALERT_LOG_PATH, {"event": "Error Processing Webhook", "strategy": strategy_webhook_name, "error": str(e)})
+        log_event(ALERT_LOG_PATH, {
+            "event": "Error Processing Webhook",
+            "strategy": strategy_webhook_name,
+            "error": str(e)
+        })
         return {"status": "error", "detail": str(e)}
 
-strategy_that_opened_trade = None # Global to track which strategy opened the current trade
 
-@app.get("/check_trade_status") # Renamed from /check
+@app.get("/check_trade_status")
 async def check_trade_status_endpoint():
     global strategy_that_opened_trade
     if not trade_active:
@@ -616,9 +650,13 @@ async def check_trade_status_endpoint():
         return {"status": "error", "reason": "Trade active but opening strategy unknown."}
 
     await check_and_close_active_trade(strategy_that_opened_trade)
-    
-    if trade_active : # If still active after check
-        return {"status": "checked_still_active", "entry_price": entry_price, "signal": current_signal_direction}
+
+    if trade_active:
+        return {
+            "status": "checked_still_active",
+            "entry_price": entry_price,
+            "signal": current_signal_direction
+        }
     else:
         return {"status": "checked_trade_closed_or_halted"}
 
