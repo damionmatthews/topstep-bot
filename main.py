@@ -477,12 +477,13 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     return await projectx_api_request("POST", "/api/Position/closeContract", payload=payload)
 
 async def fetch_current_price(contract_id: str):
-    global entry_price
-    if entry_price:
-        # Simulate some price movement for testing check_and_close_trade
-        import random
-        simulated_move = random.uniform(-5, 5) # Simulate a move of +/- 5 points
-        return entry_price + simulated_move
+    try:
+        trades = get_event_data().get("trades", [])
+        if trades:
+            trade = trades[-1]
+            return trade.get("price") or trade.get("p")
+    except Exception as e:
+        logger.error(f"[Price Fetch] Error fetching price: {e}")
     return None
 
 async def check_and_close_active_trade(strategy_name_of_trade: str):
