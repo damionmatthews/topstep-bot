@@ -169,9 +169,9 @@ async def startup_event():
             # Start the market data stream
             contract_id = os.getenv("CONTRACT_ID") or "CON.F.US.EP.M25"
             if not token or not contract_id:
-            logger.error("[SignalR] Missing authToken or contractId.")
-    else:
-    setupSignalRConnection(token, contract_id)
+                logger.error("[SignalR] Missing authToken or contractId.")
+            else:
+                setupSignalRConnection(token, contract_id)
 
     except httpx.HTTPError as e:
         logger.error(f"HTTP error during login: {e}")
@@ -180,7 +180,7 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         raise
-        
+
 @app.on_event("startup")
 async def startup_wrapper():
     await startup_event()
