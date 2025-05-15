@@ -658,9 +658,59 @@ async def config_dashboard_with_selection_get(strategy_selected: str = None):
     global current_strategy_name
     if strategy_selected and strategy_selected in strategies:
         current_strategy_name = strategy_selected
-    # active_strategy_config is updated by the dashboard_page if current_strategy_name changes
     return await config_dashboard_page()
 
+@app.get("/contract_search", response_class=HTMLResponse)
+async def contract_search_page(search_query: str = ""):
+    results_html = ""
+    if search_query:
+        try:
+            contracts = await projectx_api_request("POST", "/api/Contract/search", payload={"live": False, "searchText": search_query})
+            for contract in contracts.get("contracts", []):
+                results_html += f"""
+                <tr>
+                    <td>{contract['id']}</td>
+                    <td>{contract['name']}</td>
+                    <td>{contract['description']}</td>
+                    <td>{contract['tickSize']}</td>
+                    <td>{contract['tickValue']}</td>
+                    <td><button onclick="copyToConfig('{contract['id']}')">Copy</button></td>
+                </tr>
+                """
+        except Exception as e:
+            results_html = f"<tr><td colspan='6'>Error: {str(e)}</td></tr>"
+
+    html = f"""
+    <html>
+    <head><title>Contract Search</title>{COMMON_CSS}</head>
+    <body><div class="container">
+        <h1>Contract Search</h1>
+        <form method="get">
+            <label for="search_query">Search Term:</label>
+            <input type="text" id="search_query" name="search_query" value="{search_query}" />
+            <button type="submit">Search</button>
+        </form>
+        <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
+        <table>
+            <thead>
+                <tr><th>ID</th><th>Name</th><th>Description</th><th>Tick Size</th><th>Tick Value</th><th>Action</th></tr>
+            </thead>
+            <tbody>{results_html}</tbody>
+        </table>
+    </div>
+    <script>
+        function copyToConfig(contractId) {{
+            const input = document.getElementById('projectx_contract_id');
+            if (input) {{
+                input.value = contractId;
+                alert("Contract ID copied to config input.");
+            }} else {{
+                alert("ProjectX Contract ID input field not found in strategy config form.");
+            }}
+        }}
+    </script>
+    </body></html>
+    
 @app.head("/", response_class=HTMLResponse)
 async def config_dashboard_with_selection_head(strategy_selected: str = None):
     global current_strategy_name
@@ -833,6 +883,7 @@ async def dashboard_menu_html_page(): # Renamed
         <h1>Topstep Bot Dashboard</h1>
         <ul class="menu-list">
             <li><a href="/">Configuration & Status</a></li>
+            <li><a href="/contract_search">Contract Search</a></li>
             <li><a href="/logs/trades">Trade History</a></li>
             <li><a href="/logs/alerts">Alert Log</a></li>
             <li><a href="/toggle_trading_status">Toggle Trading (View Status)</a></li>
