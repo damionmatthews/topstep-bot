@@ -11,6 +11,7 @@ from signalRClient import setupSignalRConnection, closeSignalRConnection, get_ev
 import logging
 import os
 import asyncio
+from userHubClient import setupUserHubConnection
 
 app = FastAPI()
 
@@ -166,17 +167,16 @@ async def startup_event():
 
             logger.info("ProjectX Login successful")
 
-            # Start the market data stream
             contract_id = os.getenv("CONTRACT_ID") or "CON.F.US.EP.M25"
             if not token or not contract_id:
                 logger.error("[SignalR] Missing authToken or contractId.")
             else:
                 setupSignalRConnection(token, contract_id)
+                setupUserHubConnection(token)
 
     except httpx.HTTPError as e:
         logger.error(f"HTTP error during login: {e}")
         raise
-
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         raise
