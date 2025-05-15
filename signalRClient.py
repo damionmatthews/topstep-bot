@@ -74,7 +74,11 @@ def handle_trade_event(args):
         trade_data.append(args)
         logger.debug(f"[Trade] {args}")
         if trade_callback:
-            asyncio.create_task(trade_callback(args))
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(trade_callback(args))
+            else:
+                loop.run_until_complete(trade_callback(args))
     except Exception as e:
         logger.error(f"[SignalR] Trade handler error: {e}")
 
