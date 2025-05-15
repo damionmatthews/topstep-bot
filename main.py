@@ -438,15 +438,22 @@ async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
 
     try:
         result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
-        logger.info(f"[Order Response] {result}")
+        logger.info(f"[Order Response] Raw JSON: {result}")
 
-        if not result:
-            raise ValueError("No response received from ProjectX order placement.")
+# Extra diagnostics
+if hasattr(response, 'text'):
+    logger.info(f"[Order Response Body] {response.text}")
+logger.info(f"[Order HTTP Status] {response.status_code}")
+logger.info(f"[Order Headers] {response.headers}")
 
-        order_id = result.get("orderId")
-        if not order_id or not result.get("success", False):
-            error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
-            raise ValueError(f"Order placement failed, response: {error_msg}")
+if not result:
+    raise ValueError("No response received from ProjectX order placement.")
+
+order_id = result.get("orderId")
+if not order_id or not result.get("success", False):
+    error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
+    raise ValueError(f"Order placement failed, response: {error_msg}")
+
 
         logger.info(f"✅ Order placed successfully. Order ID: {order_id}")
         return {"success": True, "orderId": order_id}
