@@ -437,38 +437,37 @@ async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
     logger.info(f"[Order Attempt] Sending order with payload: {json.dumps(payload)}")
 
     try:
-    result = await projectx_api_request("POST", "/api/Order/place", payload=payload)
+        # --- Manual HTTP call to capture full response ---
+        token = await get_projectx_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        url = "https://api.topstepx.com/api/Order/place"
 
-    # Enhanced diagnostics
-    logger.info(f"[Order Response] Raw JSON: {result}")
-    
-    # Note: This is only accessible if you return the raw response too.
-    # You can temporarily comment this out or update projectx_api_request to return (result, response) if needed.
-    # logger.info(f"[Order Response Body] {response.text}")
-    # logger.info(f"[Order HTTP Status] {response.status_code}")
-    # logger.info(f"[Order Headers] {response.headers}")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload, headers=headers)
 
-# Extra diagnostics
-if hasattr(response, 'text'):
-    logger.info(f"[Order Response Body] {response.text}")
-logger.info(f"[Order HTTP Status] {response.status_code}")
-logger.info(f"[Order Headers] {response.headers}")
+        # Log raw response details
+        logger.info(f"[HTTP Status] {response.status_code}")
+        logger.info(f"[HTTP Headers] {dict(response.headers)}")
+        logger.info(f"[HTTP Body] {response.text}")
 
-if not result:
-    raise ValueError("No response received from ProjectX order placement.")
+        result = response.json()
+        logger.info(f"[Order Response] Parsed JSON: {result}")
 
-order_id = result.get("orderId")
-if not order_id or not result.get("success", False):
-    error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
-    raise ValueError(f"Order placement failed, response: {error_msg}")
+        if not result.get("success", False) or not result.get("orderId"):
+            error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
+            raise ValueError(f"Order placement failed, response: {error_msg}")
 
-
-        logger.info(f"✅ Order placed successfully. Order ID: {order_id}")
-        return {"success": True, "orderId": order_id}
+        logger.info(f"✅ Order placed successfully. Order ID: {result['orderId']}")
+        return {"success": True, "orderId": result["orderId"]}
 
     except Exception as e:
         logger.error(f"❌ Exception during order placement: {str(e)}")
         raise
+
 
 async def poll_order_fill(order_id: int):
     max_attempts = 10
