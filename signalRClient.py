@@ -1,7 +1,7 @@
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 from threading import Thread
 import logging
-from main import check_and_close_active_trade, strategy_that_opened_trade
+from main import strategy_that_opened_trade
 import asyncio
 
 logger = logging.getLogger(__name__)
