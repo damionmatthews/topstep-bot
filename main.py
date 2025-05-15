@@ -12,7 +12,6 @@ import logging
 import os
 import asyncio
 from userHubClient import setupUserHubConnection
-from main import check_and_close_active_trade
 
 app = FastAPI()
 
