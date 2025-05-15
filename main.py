@@ -20,8 +20,8 @@ CONTRACT_ID = os.getenv("CONTRACT_ID")
 SESSION_TOKEN = None
 
 # Strategy storage path
-PROJECTX_BASE_URL = "https://api.topstepx.com"
-
+API_BASE_AUTH = "https://api.topstepx.com"
+API_BASE_GATEWAY = "https://gateway-api.projectx.com"
 STRATEGY_PATH = "strategies.json"
 STRATEGIES_FILE_PATH = "strategies.json"  # Or wherever your strategies are stored
 def save_strategies_to_file():
@@ -376,8 +376,14 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
         "Accept": "application/json"
     }
 
+    # Decide correct base URL
+    if endpoint.startswith("/api/Order") or endpoint.startswith("/api/Account") or endpoint.startswith("/api/Position"):
+        base_url = API_BASE_GATEWAY
+    else:
+        base_url = API_BASE_AUTH
+
     async with httpx.AsyncClient() as client:
-        url = f"{PROJECTX_BASE_URL}{endpoint}"
+        url = f"{base_url}{endpoint}"
 
         try:
             if method.upper() == "POST":
