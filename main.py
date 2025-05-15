@@ -16,7 +16,7 @@ app = FastAPI()
 
 # --- ENVIRONMENT CONFIG ---
 ACCOUNT_ID = os.getenv("ACCOUNT_ID")
-CONTRACT_ID = os.getenv("CONTRACT_ID", "CON.F.US.EP.M25")
+CONTRACT_ID = os.getenv("CONTRACT_ID")
 SESSION_TOKEN = None
 
 # Strategy storage path
@@ -144,8 +144,8 @@ async def stop_market_data_stream():
 
 async def startup_event():
     logger.info("Attempting to log in to ProjectX...")
-
-    TOPSTEP_USERNAME = os.getenv("TOPSTEP_USERNAME")
+    
+    TOPSTEP_USERNAME="dcminsf"
     TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
 
     try:
