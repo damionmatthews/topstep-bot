@@ -363,43 +363,42 @@ async def on_startup():
     if SESSION_TOKEN:
         await start_market_data_stream()
     else:
-        print("⚠️ Cannot start WebSocket: SESSION_TOKEN is missing")
+        print(" Cannot start WebSocket: SESSION_TOKEN is missing")
         
-async def projectx_api_request(method: str, endpoint: str, payload: dict = None):
-    token = await get_projectx_token()
-    if not token:
-        raise Exception("Not authenticated with ProjectX")
+async def projectx_api_request(method: str, endpoint: str, payload: dict = None, retries=3):
+    for attempt in range(retries):
+        token = await get_projectx_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
+        url = f"https://api.topstepx.com{endpoint}"
 
-    url = f"https://api.topstepx.com{endpoint}"
-
-    logger.info(f"[HTTP] {method.upper()} {url}")
-
-    async with httpx.AsyncClient() as client:
         try:
-            if method.upper() == "POST":
-                response = await client.post(url, json=payload, headers=headers)
-            elif method.upper() == "GET":
-                response = await client.get(url, headers=headers)
-            else:
-                raise ValueError("Unsupported HTTP method")
+            async with httpx.AsyncClient() as client:
+                if method.upper() == "POST":
+                    response = await client.post(url, json=payload, headers=headers)
+                else:
+                    response = await client.get(url, headers=headers)
 
-            logger.info(f"HTTP Request: {method.upper()} {url} \"{response.status_code} {response.reason_phrase}\"")
-            response.raise_for_status()
-            return response.json()
+                if response.status_code == 401:
+                    logger.warning("[HTTP] Unauthorized - refreshing token...")
+                    await login_to_projectx()
+                    continue  # Retry after re-authentication
 
-        except httpx.HTTPStatusError as http_err:
-            logger.error(f"HTTP error {http_err.response.status_code}: {http_err.response.text}")
-            raise
+                response.raise_for_status()
+                return response.json()
+
+        except httpx.RequestError as e:
+            logger.warning(f"[HTTP] Attempt {attempt+1} failed: {e}")
+            await asyncio.sleep(2 ** attempt)
         except Exception as e:
-            logger.error(f"Unhandled API error: {str(e)}")
+            logger.error(f"[HTTP] Unhandled error: {e}")
             raise
 
+    raise RuntimeError(f"API request failed after {retries} attempts: {method} {endpoint}")
 
 
 # --- ORDER FUNCTIONS ---
