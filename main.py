@@ -651,7 +651,7 @@ async def get_status_endpoint(): # Renamed
 async def debug_account_info():
     try:
         token = await get_projectx_token()
-        accounts_response = await projectx_api_request("GET", "/api/Account/getAccounts")
+        accounts_response = await projectx_api_request("POST", "/api/Account/search", payload={})
         contracts_response = await projectx_api_request("POST", "/api/Contract/search", payload={"live": True, "searchText": "ENQ"})
 
         return {
