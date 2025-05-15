@@ -40,14 +40,15 @@ if os.path.exists(STRATEGY_PATH):
         strategies = json.load(f)
 else:
     strategies = {
-        "default": {
-            "MAX_DAILY_LOSS": -1200,
-            "MAX_DAILY_PROFIT": 2000,
-            "MAX_TRADE_LOSS": -350,
-            "MAX_TRADE_PROFIT": 450,
-            "CONTRACT_SYMBOL": "NQ",
-            "TRADE_SIZE": 1
-        }
+    "default": {
+    "MAX_DAILY_LOSS": -1200,
+    "MAX_DAILY_PROFIT": 2000,
+    "MAX_TRADE_LOSS": -160,
+    "MAX_TRADE_PROFIT": 90,
+    "CONTRACT_SYMBOL": "NQ",
+    "PROJECTX_CONTRACT_ID": "CON.F.US.ENQ.M25",
+    "TRADE_SIZE": 1
+    }
     }
     with open(STRATEGY_PATH, "w") as f:
         json.dump(strategies, f, indent=2)
