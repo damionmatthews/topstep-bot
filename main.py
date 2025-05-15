@@ -377,7 +377,7 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None)
     }
 
     # Decide correct base URL
-    if endpoint.startswith("/api/Order") or endpoint.startswith("/api/Account") or endpoint.startswith("/api/Position"):
+if endpoint.startswith("/api/Order") or endpoint.startswith("/api/Account") or endpoint.startswith("/api/Position"):
     base_url = API_BASE_GATEWAY
 else:
     base_url = API_BASE_AUTH
