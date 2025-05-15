@@ -386,7 +386,7 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None,
                 if response.status_code == 401:
                     logger.warning("[HTTP] Unauthorized - refreshing token...")
                     await login_to_projectx()
-                    continue  # Retry after re-authentication
+                    continue
 
                 response.raise_for_status()
                 return response.json()
