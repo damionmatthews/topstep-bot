@@ -687,13 +687,6 @@ def save_trade_states():
     with open("active_trades.json", "w") as f:
         json.dump({k: v["current_trade"].to_dict() for k, v in trade_states.items() if v["current_trade"]}, f, indent=2)
 
-# --- Error-proof JSON parsing in place_order_projectx ---
-try:
-    result = response.json()
-except json.JSONDecodeError:
-    logger.error("Failed to parse JSON response.")
-    raise
-
 # Placeholder for user_trade_events list
 user_trade_events = []
 
