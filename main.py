@@ -570,12 +570,39 @@ async def place_order_projectx(signal_direction, strategy_cfg):
     else:
         raise ValueError(f"Order placement failed: {result}")
 
+# --- Safe Log Writer ---
 def log_event(path, data):
+    import json, os
     try:
-        with open(path, "a") as f:
-            f.write(json.dumps({"timestamp": datetime.utcnow().isoformat(), **data}) + "\n")
+        if not isinstance(data, dict):
+            logger.warning(f"log_event skipped invalid data: {data}")
+            return
+        log = []
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                try:
+                    log = json.load(f)
+                    if not isinstance(log, list):
+                        logger.warning(f"log_event found malformed log: resetting {path}")
+                        log = []
+                except json.JSONDecodeError:
+                    logger.warning(f"log_event could not parse {path}, resetting.")
+                    log = []
+        log.append(data)
+        with open(path, 'w') as f:
+            json.dump(log, f, indent=2)
     except Exception as e:
-        logger.error(f"Failed to write log: {e}")
+        logger.error(f"log_event error: {e}")
+
+# --- Trade Viewer Sanitizer ---
+def filter_valid_trades(trades):
+    valid_trades = []
+    for t in trades:
+        if isinstance(t, dict) and t.get("event", "").startswith("exit"):
+            valid_trades.append(t)
+        else:
+            logger.warning(f"Invalid trade log entry skipped: {t}")
+    return valid_trades
 
 async def poll_order_fill(order_id: int):
     max_attempts = 10
