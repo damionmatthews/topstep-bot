@@ -615,6 +615,7 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
 strategy_that_opened_trade = None  # Global to track which strategy opened the current trade
 
 # Receive alert and execute strategy
+@app.post("/webhook/{strategy_webhook_name}")
 async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert):
     global trade_states
 
@@ -635,7 +636,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
         "current_trade": None
     })
 
-    if state["daily_pnl"] >= strategy_cfg["MAX_DAILY_PROFIT"] or state["daily_pnl"] <= strategy_cfg["MAX_DAILY_LOSS"]:
+    if state["daily_pnl"] >= strategy_cfg.get("MAX_DAILY_PROFIT", float("inf")) or state["daily_pnl"] <= strategy_cfg.get("MAX_DAILY_LOSS", float("-inf")):
         log_event(ALERT_LOG_PATH, {
             "event": "Trading Halted (Daily Limit)",
             "strategy": strategy_webhook_name
@@ -907,9 +908,6 @@ async def config_dashboard_with_selection(strategy_selected: str = None):
         active_strategy_config = strategies[current_strategy_name]
     # If no strategy_selected or invalid, it defaults to the global current_strategy_name
     return await config_dashboard_page()
-
-@app.post("/webhook/{strategy_webhook_name}")
-async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert):
 
 @app.post("/update_strategy_config") # Renamed
 async def update_strategy_config_action( # Renamed
