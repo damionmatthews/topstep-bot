@@ -1,8 +1,31 @@
 from signalrcore.hub_connection_builder import HubConnectionBuilder
 import logging
+import os
+import requests
 
 logger = logging.getLogger(__name__)
 
+def get_fresh_topstep_token():
+    username = os.getenv("TOPSTEP_USERNAME")
+    api_key = os.getenv("TOPSTEP_API_KEY")
+
+    if not username or not api_key:
+        raise ValueError("TOPSTEP_USERNAME or TOPSTEP_API_KEY is missing from environment.")
+
+    response = requests.post(
+        "https://api.topstepx.com/api/Auth/loginKey",
+        json={"userName": username, "apiKey": api_key}
+    )
+
+    if response.status_code != 200:
+        raise RuntimeError(f"Auth failed: {response.status_code}, {response.text}")
+
+    token = response.json().get("token")
+    if not token:
+        raise RuntimeError("Auth succeeded but no token returned.")
+
+    return token
+    
 user_connection = None
 user_connection_started = False
 user_trade_events = []
@@ -79,11 +102,8 @@ def get_userhub_events():
     }
 
 def start_userhub_connection():
-    import os
-    auth_token = os.getenv("TOPSTEP_TOKEN")
-    if not auth_token:
-        logger.error("TOPSTEP_TOKEN is not set in environment.")
-        return
-    setupUserHubConnection(auth_token)
-
-
+    try:
+        token = get_fresh_topstep_token()
+        setupUserHubConnection(token)
+    except Exception as e:
+        logger.error(f"[UserHub] Failed to start connection: {e}")
