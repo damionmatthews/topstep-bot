@@ -601,14 +601,18 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     log_event(ALERT_LOG_PATH, {"event": "Closing Position", "strategy": current_strategy_name, "payload": payload})
     return await projectx_api_request("POST", "/api/Position/closeContract", payload=payload)
 
+# --- Ensure entry_price is available before PnL ---
 async def check_and_close_active_trade(strategy_name_of_trade: str):
     global trade_active, entry_price, daily_pnl, current_signal_direction, current_trade_id
 
     if not trade_active:
+        logger.debug("check_and_close_active_trade called, but no trade is active.")
         return
 
+    logger.debug(f"Trade exit check: entry_price={entry_price}, direction={current_signal_direction}")
+
     if entry_price is None:
-        print("Entry price not yet available for trade check.")
+        logger.warning("Entry price not yet available for trade check.")
         return
 
     # Get the config for the strategy that PLACED the trade
@@ -755,11 +759,6 @@ def save_trade_states():
 
 # Placeholder for user_trade_events list
 user_trade_events = []
-
-# Placeholder for log_event function
-def log_event(path, data):
-    # Implement your logic to log events
-    pass
 
 @app.get("/check_trade_status")
 async def check_trade_status_endpoint():
