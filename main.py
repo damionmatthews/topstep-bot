@@ -119,6 +119,19 @@ async def start_market_data_stream():
         logger.error(f"❌ Failed to start market data stream: {e}")
 
 # --- EVENT HANDLERS ---
+# Register the callback on app startup
+def init_userhub_callbacks():
+    register_trade_event_handler(handle_user_trade)
+
+# Background loop to regularly check trade status
+async def periodic_status_check():
+    while True:
+        try:
+            await check_and_close_active_trade()
+        except Exception as e:
+            logger.error(f"[PeriodicCheck] Error: {e}")
+        await asyncio.sleep(60)
+
 # Called by userHubClient when trade events come in
 def on_trade_update(args):
     logger.info(f"[DEBUG] on_trade_update received: {args}")
@@ -168,20 +181,6 @@ def on_trade_update(args):
 
                 state["trade_active"] = False
                 state["current_trade"] = None
-
-
-# Register the callback on app startup
-def init_userhub_callbacks():
-    register_trade_event_handler(on_trade_update)
-
-# Background loop to regularly check trade status
-async def periodic_status_check():
-    while True:
-        try:
-            await check_and_close_active_trade()
-        except Exception as e:
-            logger.error(f"[PeriodicCheck] Error: {e}")
-        await asyncio.sleep(60)
 
 # Called by FastAPI on startup
 async def startup_tasks():
