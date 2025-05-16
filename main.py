@@ -121,8 +121,16 @@ async def start_market_data_stream():
 # --- EVENT HANDLERS ---
 # Register the callback on app startup
 def init_userhub_callbacks():
-    register_trade_event_handler(handle_user_trade)
-    logger.info(f"[TRACE] handle_user_trade triggered with: {args}")
+    def handle_user_trade(args):
+        logger.info(f"[TRACE] handle_user_trade triggered with: {args}")
+        # Example: process the trade or forward it to a downstream system
+        trade_id = args.get("orderId")
+        price = args.get("price")
+        status = args.get("status")
+
+        logger.info(f"[Trade] ID: {trade_id}, Price: {price}, Status: {status}")
+
+    userHubClient.register_trade_event_callback(handle_user_trade)
 
 # Background loop to regularly check trade status
 async def periodic_status_check():
