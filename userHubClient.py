@@ -77,3 +77,13 @@ def get_userhub_events():
         "orders": user_order_events[-50:],
         "positions": user_position_events[-50:]
     }
+
+def start_userhub_connection():
+    import os
+    auth_token = os.getenv("TOPSTEP_TOKEN")
+    if not auth_token:
+        logger.error("TOPSTEP_TOKEN is not set in environment.")
+        return
+    setupUserHubConnection(auth_token)
+
+
