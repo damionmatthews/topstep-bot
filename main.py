@@ -242,6 +242,7 @@ async def startup_event():
             else:
                 setupSignalRConnection(token, contract_id)
                 setupUserHubConnection(token)
+                init_userhub_callbacks()
 
     except httpx.HTTPError as e:
         logger.error(f"HTTP error during login: {e}")
