@@ -439,7 +439,7 @@ def fetch_current_price():
     return None
 
 # --- Update handle_user_trade to capture actual entry price ---
-ef handle_user_trade(args):
+def handle_user_trade(args):
     global trade_states
     try:
         user_trade_events.append(args)
