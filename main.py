@@ -487,6 +487,18 @@ def handle_user_trade(args):
                     })
     except Exception as e:
         logger.error(f"[UserHub] Trade handler error: {e}")
+        if trade.get("status") == "Closed":
+    for strategy, state in trade_states.items():
+        if state.get("current_trade") and state["current_trade"].order_id == order_id:
+            logger.info(f"[UserHub] Trade {order_id} was closed externally. Resetting state for {strategy}.")
+            state["trade_active"] = False
+            state["current_trade"] = None
+            log_event(TRADE_LOG_PATH, {
+                "event": "exit_external",
+                "strategy": strategy,
+                "orderId": order_id,
+                "exit_price": price
+            })
 
 # --- ORDER FUNCTIONS ---
 async def place_order_projectx(signal, strategy_cfg):
