@@ -407,9 +407,58 @@ async def projectx_api_request(method: str, endpoint: str, payload: dict = None,
 
     raise RuntimeError(f"API request failed after {retries} attempts: {method} {endpoint}")
 
+# Define the Trade class
+class Trade:
+    def __init__(self, strategy, order_id, entry_price, direction):
+        self.strategy = strategy
+        self.order_id = order_id
+        self.entry_price = entry_price
+        self.direction = direction
+        self.entry_time = datetime.utcnow()
+        self.exit_price = None
+        self.pnl = 0
+
+    def to_dict(self):
+        return self.__dict__
+
+# Strategy-based trade states
+trade_states = {}
+
+# Placeholder for get_event_data function
+def get_event_data(event_type):
+    # Implement your logic to fetch event data
+    return {}
+
+# Fetch current price from trade event
+def fetch_current_price():
+    trade_event = get_event_data('trade')
+    if isinstance(trade_event, dict):
+        trades = trade_event.get("data") or trade_event.get("trades")
+        if isinstance(trades, list) and trades:
+            last_trade = trades[-1]
+            return last_trade.get("price") or last_trade.get("p")
+    return None
+
+# --- Update handle_user_trade to capture actual entry price ---
+def handle_user_trade(args):
+    global trade_states
+    try:
+        user_trade_events.append(args)
+        logger.info(f"[UserHub] Trade Event: {args}")
+
+        trade = args[0] if isinstance(args, list) else args
+        if 'price' in trade and 'orderId' in trade:
+            order_id = trade.get('orderId')
+            price = trade['price']
+            for strategy, state in trade_states.items():
+                if state.get("current_trade") and state["current_trade"].order_id == order_id:
+                    state["current_trade"].entry_price = price
+                    logger.info(f"[UserHub] Updated entry price for {strategy}: {price}")
+    except Exception as e:
+        logger.error(f"[UserHub] Trade handler error: {e}")
 
 # --- ORDER FUNCTIONS ---
-async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
+async def place_order_projectx(signal, strategy_cfg):
     if "PROJECTX_CONTRACT_ID" not in strategy_cfg or not strategy_cfg["PROJECTX_CONTRACT_ID"]:
         raise ValueError("PROJECTX_CONTRACT_ID is missing or empty in strategy configuration.")
     if not ACCOUNT_ID:
@@ -457,6 +506,10 @@ async def place_order_projectx(signal_direction: str, strategy_cfg: dict):
         logger.error(f"❌ Exception during order placement: {str(e)}")
         raise
 
+# Define SignalAlert model
+class SignalAlert(BaseModel):
+    signal: str
+    ticker: str
 
 async def poll_order_fill(order_id: int):
     max_attempts = 10
@@ -482,14 +535,13 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     log_event(ALERT_LOG_PATH, {"event": "Closing Position", "strategy": current_strategy_name, "payload": payload})
     return await projectx_api_request("POST", "/api/Position/closeContract", payload=payload)
 
-async def fetch_current_price(contract_id: str):
-    try:
-        trades = get_event_data().get("trades", [])
-        if trades:
-            trade = trades[-1]
-            return trade.get("price") or trade.get("p")
-    except Exception as e:
-        logger.error(f"[Price Fetch] Error fetching price: {e}")
+def fetch_current_price():
+    trade_event = get_event_data('trade')
+    if isinstance(trade_event, dict):
+        trades = trade_event.get("data") or trade_event.get("trades")
+        if isinstance(trades, list) and trades:
+            last_trade = trades[-1]
+            return last_trade.get("price") or last_trade.get("p")
     return None
 
 async def check_and_close_active_trade(strategy_name_of_trade: str):
@@ -562,9 +614,9 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
 # --- MAIN ENDPOINTS ---
 strategy_that_opened_trade = None  # Global to track which strategy opened the current trade
 
-@app.post("/webhook/{strategy_webhook_name}")
+# Receive alert and execute strategy
 async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert):
-    global trade_active, entry_price, current_signal_direction, trade_time, daily_pnl, active_strategy_config, current_trade_id, strategy_that_opened_trade
+    global trade_states
 
     log_event(ALERT_LOG_PATH, {
         "event": "Webhook Received",
@@ -576,52 +628,44 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
     if strategy_webhook_name not in strategies:
         return {"status": "error", "reason": f"Strategy '{strategy_webhook_name}' not found"}
 
-    # Load the specific strategy config for this webhook
-    strategy_cfg_for_trade = strategies[strategy_webhook_name]
+    strategy_cfg = strategies[strategy_webhook_name]
+    state = trade_states.setdefault(strategy_webhook_name, {
+        "trade_active": False,
+        "daily_pnl": 0.0,
+        "current_trade": None
+    })
 
-    if daily_pnl >= strategy_cfg_for_trade["MAX_DAILY_PROFIT"] or daily_pnl <= strategy_cfg_for_trade["MAX_DAILY_LOSS"]:
+    if state["daily_pnl"] >= strategy_cfg["MAX_DAILY_PROFIT"] or state["daily_pnl"] <= strategy_cfg["MAX_DAILY_LOSS"]:
         log_event(ALERT_LOG_PATH, {
             "event": "Trading Halted (Daily Limit)",
             "strategy": strategy_webhook_name
         })
-        return {"status": "halted", "reason": f"daily limit reached for strategy {strategy_webhook_name}"}
+        return {"status": "halted", "reason": "daily limit reached"}
 
-    if trade_active:
+    if state["trade_active"]:
         log_event(ALERT_LOG_PATH, {
             "event": "Trade Ignored (Already Active)",
             "strategy": strategy_webhook_name
         })
-        return {"status": "ignored", "reason": "trade already active (globally)"}
+        return {"status": "ignored", "reason": "trade already active for strategy"}
 
     print(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time}")
 
     try:
-        result = await place_order_projectx(alert.signal, strategy_cfg_for_trade)
-
+        result = await place_order_projectx(alert.signal, strategy_cfg)
         if result.get("success") and result.get("orderId"):
-            current_trade_id = result["orderId"]
-            simulated_entry_price = 20900.00  # Placeholder
-            entry_price = simulated_entry_price
-
-            trade_active = True
-            current_signal_direction = alert.signal
-            trade_time = datetime.utcnow()
-            strategy_that_opened_trade = strategy_webhook_name
-
+            order_id = result["orderId"]
+            state["current_trade"] = Trade(strategy_webhook_name, order_id, None, alert.signal)
+            state["trade_active"] = True
             log_event(TRADE_LOG_PATH, {
                 "event": "entry",
                 "strategy": strategy_webhook_name,
                 "signal": alert.signal,
                 "ticker": alert.ticker,
-                "entry_price_estimate": entry_price,
-                "projectx_order_id": current_trade_id
+                "entry_price_estimate": None,
+                "projectx_order_id": order_id
             })
-
-            return {
-                "status": "trade placed (simulated entry)",
-                "projectx_order_id": current_trade_id,
-                "entry_price_estimate": entry_price
-            }
+            return {"status": "trade placed", "projectx_order_id": order_id}
         else:
             error_msg = result.get("errorMessage", "Unknown error placing order.")
             log_event(ALERT_LOG_PATH, {
@@ -631,7 +675,6 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
                 "response": result
             })
             return {"status": "error", "reason": f"Failed to place order: {error_msg}"}
-
     except Exception as e:
         log_event(ALERT_LOG_PATH, {
             "event": "Error Processing Webhook",
@@ -640,6 +683,24 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
         })
         return {"status": "error", "detail": str(e)}
 
+def save_trade_states():
+    with open("active_trades.json", "w") as f:
+        json.dump({k: v["current_trade"].to_dict() for k, v in trade_states.items() if v["current_trade"]}, f, indent=2)
+
+# --- Error-proof JSON parsing in place_order_projectx ---
+try:
+    result = response.json()
+except json.JSONDecodeError:
+    logger.error("Failed to parse JSON response.")
+    raise
+
+# Placeholder for user_trade_events list
+user_trade_events = []
+
+# Placeholder for log_event function
+def log_event(path, data):
+    # Implement your logic to log events
+    pass
 
 @app.get("/check_trade_status")
 async def check_trade_status_endpoint():
