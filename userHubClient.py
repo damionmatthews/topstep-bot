@@ -15,7 +15,7 @@ current_trade_id = None
 # Callback handler for trade updates
 trade_event_callback = None
 
-def register_trade_event_handler(callback):
+def register_trade_event_callback(callback):
     global trade_event_callback
     logger.info("[UserHub] Registering trade event callback.")
     trade_event_callback = callback
