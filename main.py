@@ -680,6 +680,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
 
     try:
         result = await place_order_projectx(alert.signal, strategy_cfg)
+        print(f"[DEBUG] place_order_projectx result: {result}")
         if result.get("success") and result.get("orderId"):
             order_id = result["orderId"]
             state["current_trade"] = Trade(strategy_webhook_name, order_id, None, alert.signal)
@@ -694,6 +695,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
             })
             return {"status": "trade placed", "projectx_order_id": order_id}
         else:
+            print(f"[DEBUG] Order not placed. Response: {result}")
             error_msg = result.get("errorMessage", "Unknown error placing order.")
             log_event(ALERT_LOG_PATH, {
                 "event": "Order Placement Failed",
