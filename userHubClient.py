@@ -12,6 +12,12 @@ user_position_events = []
 entry_price = None
 current_trade_id = None
 
+# Callback handler for trade updates
+trade_event_callback = None
+
+def register_trade_event_handler(callback):
+    global trade_event_callback
+    trade_event_callback = callback
 
 def setupUserHubConnection(authToken):
     global user_connection, user_connection_started
@@ -39,31 +45,19 @@ def setupUserHubConnection(authToken):
     except Exception as e:
         logger.error(f"[UserHub] Connection error: {e}")
 
-
 def handle_user_trade(args):
-    global entry_price, current_trade_id
-    try:
-        user_trade_events.append(args)
-        logger.info(f"[UserHub] Trade Event: {args}")
-
-        trade = args[0] if isinstance(args, list) else args
-        if 'price' in trade:
-            entry_price = trade['price']
-            current_trade_id = trade.get('orderId')
-            logger.info(f"[UserHub] Entry price updated: {entry_price}")
-    except Exception as e:
-        logger.error(f"[UserHub] Trade handler error: {e}")
-
+    user_trade_events.append(args)
+    logger.info(f"[UserHub] Trade Event: {args}")
+    if trade_event_callback:
+        trade_event_callback(args)
 
 def handle_user_order(args):
     user_order_events.append(args)
     logger.info(f"[UserHub] Order Event: {args}")
 
-
 def handle_user_position(args):
     user_position_events.append(args)
     logger.info(f"[UserHub] Position Event: {args}")
-
 
 def closeUserHubConnection():
     global user_connection, user_connection_started
@@ -72,7 +66,6 @@ def closeUserHubConnection():
         user_connection = None
         user_connection_started = False
         logger.info("[UserHub] Connection closed.")
-
 
 def get_userhub_events():
     return {
