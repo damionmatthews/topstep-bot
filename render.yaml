@@ -14,3 +14,15 @@ services:
         value: dcminsf
       - key: CONTRACT_ID
         value: CON.F.US.ENQ.M25
+  - type: worker
+    name: signalr-bridge
+    env: node
+    buildCommand: "npm install"
+    startCommand: "npm run start:bridge"
+    envVars:
+      - key: TOPSTEP_TOKEN
+        fromEnvVar: TOPSTEP_TOKEN
+      - key: CONTRACT_ID
+        value: CON.F.US.ENQ.M25
+      - key: PYTHON_BACKEND_URL
+        fromEnvVar: https://topstep-bot.onrender.com/bridge_trade_event
