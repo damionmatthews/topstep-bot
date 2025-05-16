@@ -121,35 +121,53 @@ async def start_market_data_stream():
 # --- EVENT HANDLERS ---
 # Called by userHubClient when trade events come in
 def on_trade_update(args):
-    trade = args[0] if isinstance(args, list) else args
-    order_id = trade.get("orderId")
-    price = trade.get("price")
-    status = trade.get("status")
+    if isinstance(args, dict):
+        trades = args.get("data") or [args]
+    elif isinstance(args, list):
+        trades = args
+    else:
+        logger.warning("[Trade Update] Unexpected format: %s", args)
+        return
 
-    for strategy, state in trade_states.items():
-        current_trade = state.get("current_trade")
-        if not current_trade or current_trade.order_id != order_id:
-            continue
+    for trade in trades:
+        order_id = trade.get("orderId")
+        price = trade.get("price")
+        status = trade.get("status")
 
-        if price:
-            current_trade.entry_price = price
-            log_event(TRADE_LOG_PATH, {
-                "event": "entry_filled",
-                "strategy": strategy,
-                "orderId": order_id,
-                "entry_price": price
-            })
+        for strategy, state in trade_states.items():
+            current_trade = state.get("current_trade")
+            if not current_trade or current_trade.order_id != order_id:
+                continue
 
-        if status == "Closed":
-            logger.info(f"[Trade Handler] Trade {order_id} for {strategy} closed externally.")
-            state["trade_active"] = False
-            state["current_trade"] = None
-            log_event(TRADE_LOG_PATH, {
-                "event": "exit_external",
-                "strategy": strategy,
-                "orderId": order_id,
-                "exit_price": price
-            })
+            if price:
+                current_trade.entry_price = price
+                log_event(TRADE_LOG_PATH, {
+                    "event": "entry_filled",
+                    "strategy": strategy,
+                    "orderId": order_id,
+                    "entry_price": price
+                })
+
+            if status == "Closed":
+                logger.info(f"[Trade Handler] Trade {order_id} for {strategy} closed externally.")
+                exit_price = price or current_trade.entry_price
+                direction = current_trade.direction
+                points = (exit_price - current_trade.entry_price) * (1 if direction == "long" else -1)
+                pnl = points * 20  # For NQ
+
+                log_event(TRADE_LOG_PATH, {
+                    "event": "exit_external",
+                    "strategy": strategy,
+                    "orderId": order_id,
+                    "entry_price": current_trade.entry_price,
+                    "exit_price": exit_price,
+                    "pnl": pnl,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+
+                state["trade_active"] = False
+                state["current_trade"] = None
+
 
 # Register the callback on app startup
 def init_userhub_callbacks():
