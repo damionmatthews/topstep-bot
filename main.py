@@ -11,7 +11,7 @@ from signalRClient import setupSignalRConnection, closeSignalRConnection, get_ev
 import logging
 import os
 import asyncio
-from userHubClient import register_trade_event_handler, setupUserHubConnection
+from userHubClient import register_trade_event_handler, setupUserHubConnection, handle_user_trade
 
 app = FastAPI()
 
