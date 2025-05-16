@@ -424,12 +424,11 @@ class Trade:
 # Strategy-based trade states
 trade_states = {}
 
-# Placeholder for get_event_data function
-def get_event_data(event_type):
-    # Implement your logic to fetch event data
-    return {}
-
 # Fetch current price from trade event
+# --- Update fetch_current_price ---
+def get_event_data(event_type=None):
+    return {}  # Replace with actual logic
+
 def fetch_current_price():
     trade_event = get_event_data('trade')
     if isinstance(trade_event, dict):
@@ -440,7 +439,7 @@ def fetch_current_price():
     return None
 
 # --- Update handle_user_trade to capture actual entry price ---
-def handle_user_trade(args):
+ef handle_user_trade(args):
     global trade_states
     try:
         user_trade_events.append(args)
@@ -510,6 +509,17 @@ async def place_order_projectx(signal, strategy_cfg):
 class SignalAlert(BaseModel):
     signal: str
     ticker: str
+    time: str = None
+
+async def place_order_projectx(signal_direction, strategy_cfg):
+    return {"success": True, "orderId": "SIMULATED123"}  # Replace with actual API logic
+
+def log_event(path, data):
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps({"timestamp": datetime.utcnow().isoformat(), **data}) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write log: {e}")
 
 async def poll_order_fill(order_id: int):
     max_attempts = 10
@@ -534,15 +544,6 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     }
     log_event(ALERT_LOG_PATH, {"event": "Closing Position", "strategy": current_strategy_name, "payload": payload})
     return await projectx_api_request("POST", "/api/Position/closeContract", payload=payload)
-
-def fetch_current_price():
-    trade_event = get_event_data('trade')
-    if isinstance(trade_event, dict):
-        trades = trade_event.get("data") or trade_event.get("trades")
-        if isinstance(trades, list) and trades:
-            last_trade = trades[-1]
-            return last_trade.get("price") or last_trade.get("p")
-    return None
 
 async def check_and_close_active_trade(strategy_name_of_trade: str):
     global trade_active, entry_price, daily_pnl, current_signal_direction, current_trade_id
@@ -650,7 +651,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
         })
         return {"status": "ignored", "reason": "trade already active for strategy"}
 
-    print(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time}")
+    print(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time if hasattr(alert, 'time') and alert.time else 'N/A'}")
 
     try:
         result = await place_order_projectx(alert.signal, strategy_cfg)
@@ -683,7 +684,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
             "error": str(e)
         })
         return {"status": "error", "detail": str(e)}
-
+        
 def save_trade_states():
     with open("active_trades.json", "w") as f:
         json.dump({k: v["current_trade"].to_dict() for k, v in trade_states.items() if v["current_trade"]}, f, indent=2)
