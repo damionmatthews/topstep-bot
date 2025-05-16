@@ -853,6 +853,16 @@ async def config_dashboard_with_selection_get(strategy_selected: str = None):
         current_strategy_name = strategy_selected
     return await config_dashboard_page()
 
+@app.get("/admin/clear_logs")
+async def clear_logs():
+    try:
+        for f in ["trade_log.json", "alert_log.json"]:
+            if os.path.exists(f):
+                os.remove(f)
+        return {"status": "success", "message": "Log files deleted"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/contract_search", response_class=HTMLResponse)
 async def contract_search_page(search_query: str = ""):
     results_html = ""
