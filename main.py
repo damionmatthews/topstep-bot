@@ -11,7 +11,7 @@ from signalRClient import setupSignalRConnection, closeSignalRConnection, get_ev
 import logging
 import os
 import asyncio
-from userHubClient import setupUserHubConnection
+from userHubClient import setupUserHubConnection, register_user_trade_callback
 
 app = FastAPI()
 
@@ -479,6 +479,12 @@ def handle_user_trade(args):
                 if state.get("current_trade") and state["current_trade"].order_id == order_id:
                     state["current_trade"].entry_price = price
                     logger.info(f"[UserHub] Updated entry price for {strategy}: {price}")
+                    log_event(TRADE_LOG_PATH, {
+                        "event": "entry_filled",
+                        "strategy": strategy,
+                        "orderId": order_id,
+                        "entry_price": price
+                    })
     except Exception as e:
         logger.error(f"[UserHub] Trade handler error: {e}")
 
@@ -538,7 +544,31 @@ class SignalAlert(BaseModel):
     time: str = None
 
 async def place_order_projectx(signal_direction, strategy_cfg):
-    return {"success": True, "orderId": "SIMULATED123"}  # Replace with actual API logic
+    payload = {
+        "accountId": int(ACCOUNT_ID),
+        "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
+        "type": 2,  # Market order
+        "side": 0 if signal_direction == "long" else 1,
+        "size": strategy_cfg["TRADE_SIZE"]
+    }
+
+    token = await get_projectx_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    url = "https://api.topstepx.com/api/Order/place"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers)
+        result = response.json()
+
+    if result.get("success") and result.get("orderId"):
+        return {"success": True, "orderId": result["orderId"]}
+    else:
+        raise ValueError(f"Order placement failed: {result}")
 
 def log_event(path, data):
     try:
@@ -573,8 +603,12 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
 
 async def check_and_close_active_trade(strategy_name_of_trade: str):
     global trade_active, entry_price, daily_pnl, current_signal_direction, current_trade_id
-    
-    if not trade_active or entry_price is None:
+
+    if not trade_active:
+        return
+
+    if entry_price is None:
+        print("Entry price not yet available for trade check.")
         return
 
     # Get the config for the strategy that PLACED the trade
