@@ -17,6 +17,7 @@ trade_event_callback = None
 
 def register_trade_event_handler(callback):
     global trade_event_callback
+    logger.info("[UserHub] Registering trade event callback.")
     trade_event_callback = callback
 
 def setupUserHubConnection(authToken):
@@ -42,6 +43,7 @@ def setupUserHubConnection(authToken):
     try:
         user_connection.start()
         user_connection_started = True
+        logger.info("[UserHub] Connection started successfully.")
     except Exception as e:
         logger.error(f"[UserHub] Connection error: {e}")
 
@@ -49,7 +51,10 @@ def handle_user_trade(args):
     user_trade_events.append(args)
     logger.info(f"[UserHub] Trade Event: {args}")
     if trade_event_callback:
+        logger.info("[UserHub] Invoking registered trade event callback.")
         trade_event_callback(args)
+    else:
+        logger.warning("[UserHub] No trade event callback registered.")
 
 def handle_user_order(args):
     user_order_events.append(args)
@@ -73,4 +78,3 @@ def get_userhub_events():
         "orders": user_order_events[-50:],
         "positions": user_position_events[-50:]
     }
-
