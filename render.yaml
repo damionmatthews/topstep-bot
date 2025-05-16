@@ -17,8 +17,10 @@ services:
   - type: worker
     name: signalr-bridge
     env: node
-    buildCommand: cd bridge && npm install
-    startCommand: cd bridge && npm start
+    buildCommand: |
+      cd bridge && npm install
+    startCommand: |
+      cd bridge && npm start
     envVars:
       - key: TOPSTEP_TOKEN
         value: your-token-here
