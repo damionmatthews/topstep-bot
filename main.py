@@ -266,7 +266,38 @@ async def trade_event_handler(args):
 
 register_trade_callback(trade_event_handler)
 
+# CORS middleware for frontend calls
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def init_userhub_callbacks():
+    def handle_user_trade(args):
+        logger.info(f"[TRACE] handle_user_trade triggered with: {args}")
+        trade_id = args.get("orderId")
+        price = args.get("price")
+        status = args.get("status")
+
+        logger.info(f"[Trade] ID: {trade_id}, Price: {price}, Status: {status}")
+        # Add your custom logic here
+
+    userHubClient.register_trade_event_callback(handle_user_trade)
+
 @app.on_event("startup")
+async def startup_event():
+    try:
+        logger.info("Starting up service...")
+        userHubClient.start_userhub_connection()  # make sure this function exists and starts the SignalR connection
+        init_userhub_callbacks()
+        logger.info("[Startup] UserHub connection initialized.")
+    except Exception as e:
+        logger.error(f"Startup failed: {str(e)}")
+        raise
+        
 async def startup_wrapper():
     await startup_event()
 
