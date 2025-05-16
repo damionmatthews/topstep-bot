@@ -17,12 +17,12 @@ services:
   - type: worker
     name: signalr-bridge
     env: node
-    buildCommand: "npm install"
-    startCommand: "npm run start:bridge"
+    buildCommand: cd bridge && npm install
+    startCommand: cd bridge && npm start
     envVars:
       - key: TOPSTEP_TOKEN
-        fromEnvVar: TOPSTEP_TOKEN
+        value: your-token-here
       - key: CONTRACT_ID
-        value: CON.F.US.ENQ.M25
+        value: CON.F.US.EP.M25
       - key: PYTHON_BACKEND_URL
-        fromEnvVar: https://topstep-bot.onrender.com/bridge_trade_event
+        value: https://topstep-bot.onrender.com/bridge_trade_event
