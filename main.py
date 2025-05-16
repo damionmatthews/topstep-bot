@@ -119,6 +119,56 @@ async def start_market_data_stream():
         logger.error(f"❌ Failed to start market data stream: {e}")
 
 # --- EVENT HANDLERS ---
+# Called by userHubClient when trade events come in
+def on_trade_update(args):
+    trade = args[0] if isinstance(args, list) else args
+    order_id = trade.get("orderId")
+    price = trade.get("price")
+    status = trade.get("status")
+
+    for strategy, state in trade_states.items():
+        current_trade = state.get("current_trade")
+        if not current_trade or current_trade.order_id != order_id:
+            continue
+
+        if price:
+            current_trade.entry_price = price
+            log_event(TRADE_LOG_PATH, {
+                "event": "entry_filled",
+                "strategy": strategy,
+                "orderId": order_id,
+                "entry_price": price
+            })
+
+        if status == "Closed":
+            logger.info(f"[Trade Handler] Trade {order_id} for {strategy} closed externally.")
+            state["trade_active"] = False
+            state["current_trade"] = None
+            log_event(TRADE_LOG_PATH, {
+                "event": "exit_external",
+                "strategy": strategy,
+                "orderId": order_id,
+                "exit_price": price
+            })
+
+# Register the callback on app startup
+def init_userhub_callbacks():
+    register_trade_event_handler(on_trade_update)
+
+# Background loop to regularly check trade status
+async def periodic_status_check():
+    while True:
+        try:
+            await check_and_close_active_trade()
+        except Exception as e:
+            logger.error(f"[PeriodicCheck] Error: {e}")
+        await asyncio.sleep(60)
+
+# Called by FastAPI on startup
+async def startup_tasks():
+    init_userhub_callbacks()
+    asyncio.create_task(periodic_status_check())
+    
 def fetch_latest_quote():
     return get_event_data()
 
