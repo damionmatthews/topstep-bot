@@ -261,6 +261,13 @@ register_trade_callback(trade_event_handler)
 async def startup_wrapper():
     await startup_event()
 
+# TEMP: Simulate a close event to validate handler
+handle_user_trade({
+    "orderId": 1139051093,
+    "price": 4400.25,
+    "status": "Closed"
+})
+
 async def launch_background_check_loop():
     asyncio.create_task(trade_status_check_loop())
 
