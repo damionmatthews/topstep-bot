@@ -686,6 +686,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
             order_id = result["orderId"]
             state["current_trade"] = Trade(strategy_webhook_name, order_id, None, alert.signal)
             state["trade_active"] = True
+            print("[DEBUG] Logging trade entry...")
             log_event(TRADE_LOG_PATH, {
                 "event": "entry",
                 "strategy": strategy_webhook_name,
@@ -694,6 +695,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
                 "entry_price_estimate": None,
                 "projectx_order_id": order_id
             })
+            print("[DEBUG] Trade entry logged successfully.")
             return {"status": "trade placed", "projectx_order_id": order_id}
         else:
             print(f"[DEBUG] Order not placed. Response: {result}")
