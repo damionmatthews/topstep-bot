@@ -121,6 +121,7 @@ async def start_market_data_stream():
 # --- EVENT HANDLERS ---
 # Called by userHubClient when trade events come in
 def on_trade_update(args):
+    logger.info(f"[DEBUG] on_trade_update received: {args}")
     if isinstance(args, dict):
         trades = args.get("data") or [args]
     elif isinstance(args, list):
