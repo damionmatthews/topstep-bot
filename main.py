@@ -13,7 +13,7 @@ import logging
 import os
 import asyncio
 import userHubClient
-from userHubClient import register_trade_event_handler, setupUserHubConnection, handle_user_trade
+from userHubClient import register_trade_event_callback, setupUserHubConnection, handle_user_trade
 
 app = FastAPI()
 
