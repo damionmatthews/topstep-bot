@@ -122,6 +122,7 @@ async def start_market_data_stream():
 # Register the callback on app startup
 def init_userhub_callbacks():
     register_trade_event_handler(handle_user_trade)
+    logger.info(f"[TRACE] handle_user_trade triggered with: {args}")
 
 # Background loop to regularly check trade status
 async def periodic_status_check():
