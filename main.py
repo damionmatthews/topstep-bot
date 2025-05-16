@@ -538,53 +538,56 @@ def handle_user_trade(args):
     global trade_states
     try:
         user_trade_events.append(args)
-        logger.info(f"[UserHub] Trade Event: {args}")
+        logger.info(f"[UserHub] handle_user_trade triggered with: {args}")
 
         trade = args[0] if isinstance(args, list) else args
         order_id = trade.get('orderId')
         price = trade.get('price')
         status = trade.get('status')
 
-        if price and order_id:
-            for strategy, state in trade_states.items():
-                if state.get("current_trade") and state["current_trade"].order_id == order_id:
-                    state["current_trade"].entry_price = price
-                    logger.info(f"[UserHub] Updated entry price for {strategy}: {price}")
+        if not order_id:
+            logger.warning("[UserHub] No orderId in trade event. Skipping.")
+            return
+
+        for strategy, state in trade_states.items():
+            current = state.get("current_trade")
+            if current and current.order_id == order_id:
+                # Set entry price if available
+                if price and not current.entry_price:
+                    current.entry_price = price
                     log_event(TRADE_LOG_PATH, {
                         "event": "entry_filled",
                         "strategy": strategy,
                         "orderId": order_id,
                         "entry_price": price
                     })
+                    logger.info(f"[UserHub] Entry price updated for strategy '{strategy}': {price}")
 
-        # NEW: always check for closure
-        if status == "Closed":
-            for strategy, state in trade_states.items():
-                if state.get("current_trade") and state["current_trade"].order_id == order_id:
-                    logger.info(f"[UserHub] Trade {order_id} was closed externally. Resetting state for {strategy}.")
-                    state["trade_active"] = False
-                    state["current_trade"] = None
+                # Handle external close
+                if status == "Closed":
+                    exit_price = price or current.entry_price
+                    pnl = ((exit_price - current.entry_price) *
+                           (1 if current.direction == "long" else -1)) * 20 * active_strategy_config.get("TRADE_SIZE", 1)
+
                     log_event(TRADE_LOG_PATH, {
                         "event": "exit_external",
                         "strategy": strategy,
                         "orderId": order_id,
-                        "exit_price": price
+                        "entry_price": current.entry_price,
+                        "exit_price": exit_price,
+                        "pnl": pnl,
+                        "timestamp": datetime.utcnow().isoformat()
                     })
+
+                    logger.info(f"[UserHub] Trade {order_id} closed for strategy '{strategy}'. PnL: {pnl:.2f}")
+
+                    # Reset state
+                    state["trade_active"] = False
+                    state["current_trade"] = None
+                    return
 
     except Exception as e:
         logger.error(f"[UserHub] Trade handler error: {e}")
-        if 'status' in trade and trade.get("status") == "Closed":
-            for strategy, state in trade_states.items():
-                if state.get("current_trade") and state["current_trade"].order_id == order_id:
-                    logger.info(f"[UserHub] Trade {order_id} was closed externally. Resetting state for {strategy}.")
-                    state["trade_active"] = False
-                    state["current_trade"] = None
-                    log_event(TRADE_LOG_PATH, {
-                        "event": "exit_external",
-                        "strategy": strategy,
-                        "orderId": order_id,
-                        "exit_price": price
-                    })
 
 # --- ORDER FUNCTIONS ---
 async def place_order_projectx(signal, strategy_cfg):
