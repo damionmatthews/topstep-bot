@@ -908,6 +908,9 @@ async def config_dashboard_with_selection(strategy_selected: str = None):
     # If no strategy_selected or invalid, it defaults to the global current_strategy_name
     return await config_dashboard_page()
 
+@app.post("/webhook/{strategy_webhook_name}")
+async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert):
+
 @app.post("/update_strategy_config") # Renamed
 async def update_strategy_config_action( # Renamed
     strategy_name_to_update: str = Form(...),
