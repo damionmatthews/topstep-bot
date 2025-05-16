@@ -472,9 +472,11 @@ def handle_user_trade(args):
         logger.info(f"[UserHub] Trade Event: {args}")
 
         trade = args[0] if isinstance(args, list) else args
-        if 'price' in trade and 'orderId' in trade:
-            order_id = trade.get('orderId')
-            price = trade['price']
+        order_id = trade.get('orderId')
+        price = trade.get('price')
+        status = trade.get('status')
+
+        if price and order_id:
             for strategy, state in trade_states.items():
                 if state.get("current_trade") and state["current_trade"].order_id == order_id:
                     state["current_trade"].entry_price = price
@@ -485,6 +487,21 @@ def handle_user_trade(args):
                         "orderId": order_id,
                         "entry_price": price
                     })
+
+        # NEW: always check for closure
+        if status == "Closed":
+            for strategy, state in trade_states.items():
+                if state.get("current_trade") and state["current_trade"].order_id == order_id:
+                    logger.info(f"[UserHub] Trade {order_id} was closed externally. Resetting state for {strategy}.")
+                    state["trade_active"] = False
+                    state["current_trade"] = None
+                    log_event(TRADE_LOG_PATH, {
+                        "event": "exit_external",
+                        "strategy": strategy,
+                        "orderId": order_id,
+                        "exit_price": price
+                    })
+
     except Exception as e:
         logger.error(f"[UserHub] Trade handler error: {e}")
         if 'status' in trade and trade.get("status") == "Closed":
