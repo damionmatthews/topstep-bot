@@ -421,7 +421,6 @@ class Trade:
     def to_dict(self):
         return self.__dict__
 
-# Strategy-based trade states
 # --- Strategy-based Trade States ---
 trade_states = {}
 user_trade_events = []
@@ -436,9 +435,9 @@ else:
     strategies = {
         "default": {
             "MAX_DAILY_LOSS": -1200,
-            "MAX_DAILY_PROFIT": 1520,
+            "MAX_DAILY_PROFIT": 2000,
             "MAX_TRADE_LOSS": -160,
-            "MAX_TRADE_PROFIT": 80,
+            "MAX_TRADE_PROFIT": 90,
             "CONTRACT_SYMBOL": "NQ",
             "PROJECTX_CONTRACT_ID": "CON.F.US.ENQ.M25",
             "TRADE_SIZE": 1
@@ -446,8 +445,10 @@ else:
     }
     with open(STRATEGY_PATH, "w") as f:
         json.dump(strategies, f, indent=2)
-ALERT_LOG_PATH = "alert_log.json"
-TRADE_LOG_PATH = "trade_log.json"
+BASE_LOG_DIR = os.path.abspath("./logs")
+os.makedirs(BASE_LOG_DIR, exist_ok=True)
+ALERT_LOG_PATH = os.path.join(BASE_LOG_DIR, "alert_log.json")
+TRADE_LOG_PATH = os.path.join(BASE_LOG_DIR, "trade_log.json")
 
 # Fetch current price from trade event
 # --- Update fetch_current_price ---
