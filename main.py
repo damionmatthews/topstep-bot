@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import os
 import json
@@ -11,6 +12,7 @@ from signalRClient import setupSignalRConnection, closeSignalRConnection, get_ev
 import logging
 import os
 import asyncio
+import userHubClient
 from userHubClient import register_trade_event_handler, setupUserHubConnection, handle_user_trade
 
 app = FastAPI()
