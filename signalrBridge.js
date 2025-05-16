@@ -4,7 +4,7 @@ const axios = require('axios');
 // CONFIG — Fill in your values
 const AUTH_TOKEN = process.env.TOPSTEP_TOKEN;  // Set via env var
 const CONTRACT_ID = process.env.CONTRACT_ID || "CON.F.US.EP.M25";
-const PYTHON_BACKEND_URL = "http://localhost:10000/bridge_trade_event"; // Update if needed
+const PYTHON_BACKEND_URL = "https://topstep-bot.onrender.com/bridge_trade_event"; // Update if needed
 
 if (!AUTH_TOKEN) {
   console.error("❌ TOPSTEP_TOKEN environment variable is not set.");
