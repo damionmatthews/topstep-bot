@@ -36,11 +36,9 @@ def setupUserHubConnection(authToken):
     user_connection.on_open(lambda: logger.info("[UserHub] Connection opened."))
     user_connection.on_close(lambda: logger.warning("[UserHub] Connection closed."))
     user_connection.on("GatewayUserTrade", handle_user_trade)
-logger.info("[UserHub] Subscribed to GatewayUserTrade")
-
-user_connection.on("GatewayUserOrder", handle_user_order)
-user_connection.on("GatewayUserPosition", handle_user_position)
-
+    logger.info("[UserHub] Subscribed to GatewayUserTrade")
+    user_connection.on("GatewayUserOrder", handle_user_order)
+    user_connection.on("GatewayUserPosition", handle_user_position)
     try:
         user_connection.start()
         user_connection_started = True
