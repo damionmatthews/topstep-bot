@@ -43,7 +43,7 @@ services:
     plan: free    # Or your chosen plan
     rootDir: bridge # CRUCIAL: Specifies that this service's code is in the 'bridge/' subdirectory
     buildCommand: npm install
-    startCommand: node signalrBridge.js
+    startCommand: node signalrBridge.cjs
     healthCheckPath: /health # Your signalrBridge.js has this endpoint
     envVars:
       - key: TOPSTEP_TOKEN # This will be dynamically updated by n8n via the /update-token endpoint
