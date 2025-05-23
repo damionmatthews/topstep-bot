@@ -1,48 +1,62 @@
+# render.yaml
+
 services:
   # --- Service 1: Python FastAPI Application ---
-  - type: web  # This hyphen is at the base level under services
-    name: topstep-bot 
+  - type: web
+    name: topstep-bot # You can rename this if you like, e.g., topstep-python-app
     env: python
-    region: oregon # Or your preferred region
-    plan: free # Or your current plan
-    buildCommand: pip install black && black . && pip install -r requirements.txt # Python specific build
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT # Use $PORT for Render
-    healthCheckPath: / # Or a specific health check endpoint in main.py
+    region: oregon # Or your preferred Render region
+    plan: free    # Or your chosen plan
+    buildCommand: pip install black && black . && pip install -r requirements.txt && pip install python-multipart # Removed signalrcore if Python doesn't directly use it
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT # Render sets $PORT
+    healthCheckPath: / # A basic health check; create a /health endpoint in main.py for better checks
     envVars:
       - key: TOPSTEP_API_KEY
-        value: 4s/YUAhW2bXdG/TyNL4v4vd3kybtMGVLAx+mX4D0iXU=
+        fromSecretKeyRef: # Example using Render Secret Groups
+          name: topstep-app-secrets # Choose a name for your secret group
+          key: MY_TOPSTEP_API_KEY  # The key name within that secret group
       - key: ACCOUNT_ID
-        value: 7715028
-      - key: TOPSTEP_USERNAME
-        value: dcminsf
-      - key: CONTRACT_ID
-        value: CON.F.US.ENQ.M25
-      - key: BRIDGE_API_SECRET 
         fromSecretKeyRef:
-          name: topstep-secrets
-          key: MY_BRIDGE_API_SECRET_KEY # Secret for Python to call bridge (if needed)
-      - key: BRIDGE_INTERNAL_URL # If Python needs to call bridge internally
-        value: http://signalr-bridge-svc:3001 # Example, using service discovery name
-        
- - type: web  # This hyphen MUST be at the SAME indentation level as the one above
-    name: signalr-bridge-svc 
+          name: topstep-app-secrets
+          key: MY_ACCOUNT_ID
+      - key: TOPSTEP_USERNAME
+        fromSecretKeyRef:
+          name: topstep-app-secrets
+          key: MY_TOPSTEP_USERNAME
+      - key: CONTRACT_ID # If main.py needs a default or specific contract ID
+        fromSecretKeyRef:
+          name: topstep-app-secrets
+          key: DEFAULT_PYTHON_CONTRACT_ID
+      - key: BRIDGE_API_SECRET # Secret for Python app to use if it needs to call the bridge
+        fromSecretKeyRef:
+          name: topstep-app-secrets
+          key: MY_SHARED_BRIDGE_API_SECRET
+      - key: BRIDGE_INTERNAL_URL # For Python to call Bridge via internal Render network
+        value: http://signalr-bridge-svc:3001 # <bridge-service-name>:<bridge-internal-port>
+                                             # Note: 3001 is if bridge listens on 3001 internally. Render maps public PORT.
+
+  # --- Service 2: Node.js SignalR Bridge Service ---
+  - type: web # This service also needs to be 'web' to have an HTTP endpoint for /update-token
+    name: signalr-bridge-svc # This will be part of its public URL, e.g., signalr-bridge-svc.onrender.com
     env: node
-    region: oregon 
-    plan: free 
-    rootDir: bridge 
+    region: oregon # Match region or choose as needed
+    plan: free    # Or your chosen plan
+    rootDir: bridge # CRUCIAL: Specifies that this service's code is in the 'bridge/' subdirectory
     buildCommand: npm install
     startCommand: node signalrBridge.js
-    healthCheckPath: /health
+    healthCheckPath: /health # Your signalrBridge.js has this endpoint
     envVars:
-      - key: TOPSTEP_TOKEN # This will be dynamically updated by n8n
-        value: "initial_placeholder_or_expired_token" 
+      - key: TOPSTEP_TOKEN # This will be dynamically updated by n8n via the /update-token endpoint
+        value: "initial_placeholder_or_an_old_token" # Bridge needs an initial value
       - key: ACCOUNT_ID
-        value: 7715028
-      - key: N8N_USER_FILL_WEBHOOK_URL # Bridge needs to POST to n8n
-        value: "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge" # Your actual n8n webhook
-      - key: BRIDGE_API_SECRET # For securing the bridge's /update-token endpoint
         fromSecretKeyRef:
-          name: topstep-secrets
-          key: MY_BRIDGE_API_SECRET_KEY # This secret is used by n8n to call the bridge
-      # RENDER WILL AUTOMATICALLY PROVIDE 'PORT' environment variable. 
-      # Your signalrBridge.js uses process.env.PORT || 3001.
+          name: topstep-app-secrets # Use the same secret group if the value is the same
+          key: MY_ACCOUNT_ID
+      - key: N8N_USER_FILL_WEBHOOK_URL # The URL bridge POSTs User Hub events to
+        value: "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge" # Your actual n8n webhook
+      - key: BRIDGE_API_SECRET # Secret for n8n to use when calling this bridge's /update-token endpoint
+        fromSecretKeyRef:
+          name: topstep-app-secrets
+          key: MY_SHARED_BRIDGE_API_SECRET
+      # RENDER WILL AUTOMATICALLY PROVIDE 'PORT' for this web service.
+      # Your signalrBridge.js uses `process.env.PORT || 3001`. This is correct.
