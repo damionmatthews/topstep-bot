@@ -1,6 +1,7 @@
 services:
- - type: web
-    name: topstep-bot # Or keep your current name for the Python app
+  # --- Service 1: Python FastAPI Application ---
+  - type: web  # This hyphen is at the base level under services
+    name: topstep-bot 
     env: python
     region: oregon # Or your preferred region
     plan: free # Or your current plan
@@ -22,15 +23,16 @@ services:
           key: MY_BRIDGE_API_SECRET_KEY # Secret for Python to call bridge (if needed)
       - key: BRIDGE_INTERNAL_URL # If Python needs to call bridge internally
         value: http://signalr-bridge-svc:3001 # Example, using service discovery name
-- type: web  # Important: 'web' to get a public URL
-    name: signalr-bridge-svc # CHOOSE A UNIQUE NAME for this service
+        
+ - type: web  # This hyphen MUST be at the SAME indentation level as the one above
+    name: signalr-bridge-svc 
     env: node
-    region: oregon # Match region or choose as needed
-    plan: free # Or your current plan
-    rootDir: bridge # CRUCIAL: Tells Render to look inside the 'bridge' subdirectory
+    region: oregon 
+    plan: free 
+    rootDir: bridge 
     buildCommand: npm install
     startCommand: node signalrBridge.js
-    healthCheckPath: /health # Your bridge has this endpoint
+    healthCheckPath: /health
     envVars:
       - key: TOPSTEP_TOKEN # This will be dynamically updated by n8n
         value: "initial_placeholder_or_expired_token" 
