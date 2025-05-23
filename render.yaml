@@ -22,9 +22,15 @@ services:
     startCommand: |
       cd bridge && npm start
     envVars:
-      - key: TOPSTEP_TOKEN
-        value: your-token-here
+      - key: TOPSTEP_TOKEN 
+        value: "your-initial-placeholder-or-old-token"
       - key: CONTRACT_ID
         value: CON.F.US.EP.M25
       - key: PYTHON_BACKEND_URL
         value: https://topstep-bot.onrender.com/bridge_trade_event
+      - key: ACCOUNT_ID
+        value: "7715028" 
+      - key: N8N_USER_FILL_WEBHOOK_URL
+        value: "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge"
+      - key: BRIDGE_API_SECRET
+        value: "rudy_tippi_caprice_carole_dcm" 
