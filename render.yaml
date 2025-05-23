@@ -1,10 +1,12 @@
 services:
-  - type: web
-    name: topstep-python-bot # Renamed for clarity
+ - type: web
+    name: topstep-bot # Or keep your current name for the Python app
     env: python
-    plan: free # Or your chosen plan
-    buildCommand: pip install black && black . && pip install -r requirements.txt && pip install --upgrade pip && pip install python-multipart
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT 
+    region: oregon # Or your preferred region
+    plan: free # Or your current plan
+    buildCommand: pip install black && black . && pip install -r requirements.txt # Python specific build
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT # Use $PORT for Render
+    healthCheckPath: / # Or a specific health check endpoint in main.py
     envVars:
       - key: TOPSTEP_API_KEY
         value: 4s/YUAhW2bXdG/TyNL4v4vd3kybtMGVLAx+mX4D0iXU=
@@ -14,29 +16,31 @@ services:
         value: dcminsf
       - key: CONTRACT_ID
         value: CON.F.US.ENQ.M25
-      - key: BRIDGE_API_SECRET # Python needs this to call the bridge if it ever needed to
+      - key: BRIDGE_API_SECRET 
         fromSecretKeyRef:
           name: topstep-secrets
-          key: BRIDGE_API_SECRET
-
-  - type: web # <<<< CHANGE THIS FROM 'worker'
-    name: signalr-bridge-service # Give it a unique name
+          key: MY_BRIDGE_API_SECRET_KEY # Secret for Python to call bridge (if needed)
+      - key: BRIDGE_INTERNAL_URL # If Python needs to call bridge internally
+        value: http://signalr-bridge-svc:3001 # Example, using service discovery name
+- type: web  # Important: 'web' to get a public URL
+    name: signalr-bridge-svc # CHOOSE A UNIQUE NAME for this service
     env: node
-    plan: free # Or your chosen plan
-    buildCommand: |
-      npm install
-    startCommand: |
-      node signalrBridge.js
+    region: oregon # Match region or choose as needed
+    plan: free # Or your current plan
+    rootDir: bridge # CRUCIAL: Tells Render to look inside the 'bridge' subdirectory
+    buildCommand: npm install
+    startCommand: node signalrBridge.js
+    healthCheckPath: /health # Your bridge has this endpoint
     envVars:
-      - key: TOPSTEP_TOKEN 
-        value: "initial_placeholder_token" # Will be updated by n8n
+      - key: TOPSTEP_TOKEN # This will be dynamically updated by n8n
+        value: "initial_placeholder_or_expired_token" 
       - key: ACCOUNT_ID
         value: 7715028
-      - key: N8N_USER_FILL_WEBHOOK_URL # Bridge needs to know where to send fills
-        value: "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge"
-      - key: BRIDGE_API_SECRET # For securing its /update-token endpoint
+      - key: N8N_USER_FILL_WEBHOOK_URL # Bridge needs to POST to n8n
+        value: "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge" # Your actual n8n webhook
+      - key: BRIDGE_API_SECRET # For securing the bridge's /update-token endpoint
         fromSecretKeyRef:
           name: topstep-secrets
-          key: BRIDGE_API_SECRET
-      # RENDER WILL PROVIDE THE PORT via process.env.PORT
-      # Your signalrBridge.js already uses process.env.PORT
+          key: MY_BRIDGE_API_SECRET_KEY # This secret is used by n8n to call the bridge
+      # RENDER WILL AUTOMATICALLY PROVIDE 'PORT' environment variable. 
+      # Your signalrBridge.js uses process.env.PORT || 3001.
