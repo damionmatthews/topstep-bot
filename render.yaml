@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: topstep-bot
+    name: topstep-python-bot # Renamed for clarity
     env: python
-    plan: free
+    plan: free # Or your chosen plan
     buildCommand: pip install black && black . && pip install -r requirements.txt && pip install --upgrade pip && pip install python-multipart
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT 
     envVars:
       - key: TOPSTEP_API_KEY
         value: 4s/YUAhW2bXdG/TyNL4v4vd3kybtMGVLAx+mX4D0iXU=
@@ -14,23 +14,29 @@ services:
         value: dcminsf
       - key: CONTRACT_ID
         value: CON.F.US.ENQ.M25
-  - type: worker
-    name: signalr-bridge
+      - key: BRIDGE_API_SECRET # Python needs this to call the bridge if it ever needed to
+        fromSecretKeyRef:
+          name: topstep-secrets
+          key: BRIDGE_API_SECRET
+
+  - type: web # <<<< CHANGE THIS FROM 'worker'
+    name: signalr-bridge-service # Give it a unique name
     env: node
+    plan: free # Or your chosen plan
     buildCommand: |
-      cd bridge && npm install
+      npm install
     startCommand: |
-      cd bridge && npm start
+      node signalrBridge.js
     envVars:
       - key: TOPSTEP_TOKEN 
-        value: "your-initial-placeholder-or-old-token"
-      - key: CONTRACT_ID
-        value: CON.F.US.EP.M25
-      - key: PYTHON_BACKEND_URL
-        value: https://topstep-bot.onrender.com/bridge_trade_event
+        value: "initial_placeholder_token" # Will be updated by n8n
       - key: ACCOUNT_ID
-        value: "7715028" 
-      - key: N8N_USER_FILL_WEBHOOK_URL
+        value: 7715028
+      - key: N8N_USER_FILL_WEBHOOK_URL # Bridge needs to know where to send fills
         value: "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge"
-      - key: BRIDGE_API_SECRET
-        value: "rudy_tippi_caprice_carole_dcm" 
+      - key: BRIDGE_API_SECRET # For securing its /update-token endpoint
+        fromSecretKeyRef:
+          name: topstep-secrets
+          key: BRIDGE_API_SECRET
+      # RENDER WILL PROVIDE THE PORT via process.env.PORT
+      # Your signalrBridge.js already uses process.env.PORT
