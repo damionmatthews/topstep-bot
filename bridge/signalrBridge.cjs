@@ -123,12 +123,11 @@ async function startUserHubConnection() {
         console.log("[Bridge][SignalR] User Hub connection attempt skipped: already connected or connecting/reconnecting.");
         return;
     }
-
     console.log("[Bridge][SignalR] Initializing User Hub connection...");
     userHubConnection = new HubConnectionBuilder()
         .withUrl(USER_HUB_URL, {
             accessTokenFactory: () => TOPSTEPX_SESSION_TOKEN,
-            skipNegotiation: true,
+            // skipNegotiation: true,
             transport: HttpTransportType.WebSockets
         })
         .withAutomaticReconnect([0, 3000, 10000, 30000, 60000, null]) // Added a 60s delay
