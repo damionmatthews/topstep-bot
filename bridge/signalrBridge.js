@@ -5,7 +5,7 @@ const app = express();
 
 // --- CONFIGURATION (from environment variables set in Render) ---
 let TOPSTEPX_SESSION_TOKEN = process.env.TOPSTEP_TOKEN; 
-const N8N_EVENT_WEBHOOK_URL = process.env.N8N_USER_FILL_WEBHOOK_URL || "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge"; // Fallback if not set
+const N8N_USER_FILL_WEBHOOK_URL = "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge";
 const ACCOUNT_ID = process.env.ACCOUNT_ID;
 const BRIDGE_API_SECRET = process.env.BRIDGE_API_SECRET; // For securing the /update-token endpoint
 const BRIDGE_PORT = process.env.PORT || 3001; // Render often sets PORT, 3001 is a fallback
