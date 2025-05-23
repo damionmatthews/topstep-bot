@@ -12,13 +12,9 @@ services:
     healthCheckPath: / # A basic health check; create a /health endpoint in main.py for better checks
     envVars:
       - key: TOPSTEP_API_KEY
-        fromSecretKeyRef: # Example using Render Secret Groups
-          name: topstep-app-secrets # Choose a name for your secret group
-          key: MY_TOPSTEP_API_KEY  # The key name within that secret group
+        value: 4s/YUAhW2bXdG/TyNL4v4vd3kybtMGVLAx+mX4D0iXU=
       - key: ACCOUNT_ID
-        fromSecretKeyRef:
-          name: topstep-app-secrets
-          key: MY_ACCOUNT_ID
+        value: 7715028
       - key: TOPSTEP_USERNAME
         fromSecretKeyRef:
           name: topstep-app-secrets
@@ -49,9 +45,7 @@ services:
       - key: TOPSTEP_TOKEN # This will be dynamically updated by n8n via the /update-token endpoint
         value: "initial_placeholder_or_an_old_token" # Bridge needs an initial value
       - key: ACCOUNT_ID
-        fromSecretKeyRef:
-          name: topstep-app-secrets # Use the same secret group if the value is the same
-          key: MY_ACCOUNT_ID
+        value: 7715028
       - key: N8N_USER_FILL_WEBHOOK_URL # The URL bridge POSTs User Hub events to
         value: "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge" # Your actual n8n webhook
       - key: BRIDGE_API_SECRET # Secret for n8n to use when calling this bridge's /update-token endpoint
