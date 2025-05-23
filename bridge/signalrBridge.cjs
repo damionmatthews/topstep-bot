@@ -1,24 +1,32 @@
+// signalrBridge.cjs
 const { HubConnectionBuilder, HttpTransportType, LogLevel, HubConnectionState } = require('@microsoft/signalr');
 const axios = require('axios');
 const express = require('express');
 const app = express();
 
-// --- CONFIGURATION (from environment variables set in Render) ---
+// --- CONFIGURATION ---
 let TOPSTEPX_SESSION_TOKEN = process.env.TOPSTEP_TOKEN; 
-const N8N_USER_FILL_WEBHOOK_URL = "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge";
+
+// Define N8N_EVENT_WEBHOOK_URL clearly at the top
+const N8N_USER_FILL_WEBHOOK_URL_FROM_ENV = process.env.N8N_USER_FILL_WEBHOOK_URL;
+const DEFAULT_N8N_WEBHOOK_URL = "https://dcminsf.app.n8n.cloud/webhook/user-fill-event-bridge";
+const N8N_EVENT_WEBHOOK_URL = N8N_USER_FILL_WEBHOOK_URL_FROM_ENV || DEFAULT_N8N_WEBHOOK_URL;
+
 const ACCOUNT_ID = process.env.ACCOUNT_ID;
-const BRIDGE_API_SECRET = process.env.BRIDGE_API_SECRET; // For securing the /update-token endpoint
-const BRIDGE_PORT = process.env.PORT || 3001; // Render often sets PORT, 3001 is a fallback
+const BRIDGE_API_SECRET = process.env.BRIDGE_API_SECRET;
+const BRIDGE_PORT = process.env.PORT || 3001;
 
 // --- Validate essential configuration ---
 if (!TOPSTEPX_SESSION_TOKEN || TOPSTEPX_SESSION_TOKEN === "your-token-here") {
-  console.warn("⚠️ WARNING: TOPSTEP_TOKEN environment variable is not set optimally or is a placeholder. Bridge will attempt to start but may need token update from n8n.");
-  // We don't exit here, as n8n might provide the token shortly after startup.
+  console.warn("⚠️ WARNING: TOPSTEP_TOKEN environment variable is not set optimally or is a placeholder.");
 }
-if (!N8N_EVENT_WEBHOOK_URL) {
-  console.error("❌ FATAL: N8N_USER_FILL_WEBHOOK_URL (or a default) is not configured.");
+
+// Now check the N8N_EVENT_WEBHOOK_URL that was just defined
+if (!N8N_EVENT_WEBHOOK_URL) { // This is the line that was erroring (around line 18-20 in your file)
+  console.error("❌ FATAL: N8N_EVENT_WEBHOOK_URL could not be determined (either from ENV or default).");
   process.exit(1);
 }
+// The rest of your validations
 if (!ACCOUNT_ID) {
     console.error("❌ FATAL: ACCOUNT_ID environment variable is not set. Required for User Hub subscriptions.");
     process.exit(1);
