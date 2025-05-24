@@ -5,7 +5,7 @@ const axios = require('axios');
 
 const PORT = 10000;
 const ACCOUNT_ID = process.env.ACCOUNT_ID;
-const TOKEN = process.env.ACCESS_TOKEN;
+let TOKEN = process.env.ACCESS_TOKEN;
 const USER_HUB_URL = `https://rtc.topstepx.com/hubs/user`;
 
 let connection;
@@ -18,7 +18,10 @@ async function startSignalRConnection() {
     .withUrl(USER_HUB_URL, {
       skipNegotiation: true,
       transport: HttpTransportType.WebSockets,
-      accessTokenFactory: () => TOKEN,
+      accessTokenFactory: () => {
+        console.log('[Bridge][SignalR] Providing access token:', TOKEN ? '[REDACTED]' : '[MISSING]');
+        return TOKEN;
+      },
     })
     .configureLogging(LogLevel.Debug)
     .withAutomaticReconnect({
@@ -45,7 +48,7 @@ async function startSignalRConnection() {
     await connection.start();
     connected = true;
     console.log('[Bridge][SignalR] ✅ User Hub SignalR Connected successfully.');
-    subscribeToUserHub();
+    setTimeout(() => subscribeToUserHub(), 250);
   } catch (err) {
     connected = false;
     console.error('[Bridge][SignalR] Failed to connect:', err);
@@ -79,9 +82,14 @@ app.post('/update-token', (req, res) => {
   if (access_token) {
     console.log('[Bridge][HTTP] Token updated.');
     TOKEN = access_token;
-    if (!connected) {
+
+    if (connected) {
+      console.log('[Bridge][HTTP] Reconnecting due to new token...');
+      connection.stop().then(() => startSignalRConnection());
+    } else {
       startSignalRConnection();
     }
+
     res.sendStatus(200);
   } else {
     res.status(400).send('Missing token');
