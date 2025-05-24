@@ -1,10 +1,10 @@
 {
   "name": "signalr-bridge",
   "version": "1.0.0",
-  "main": "signalrBridge.js",
+  "main": "signalrBridge.cjs",
   "type": "module",
   "scripts": {
-    "start": "node signalrBridge.js"
+    "start": "node signalrBridge.cjs"
   },
   "dependencies": {
     "@microsoft/signalr": "^7.0.5",
