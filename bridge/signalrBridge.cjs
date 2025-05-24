@@ -187,16 +187,18 @@ async function invokeUserHubSubscriptions() {
     if (userHubConnection && userHubConnection.state === HubConnectionState.Connected) {
         try {
             const accountIdNum = parseInt(ACCOUNT_ID);
-            if (isNaN(accountIdNum)) {
-                console.error("[Bridge][SignalR] Invalid ACCOUNT_ID for subscriptions.");
-                return;
-            }
+            if (isNaN(accountIdNum)) { /* ... */ return; }
             console.log(`[Bridge][SignalR] Invoking User Hub subscriptions for Account ID: ${accountIdNum}...`);
+            
             await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
-            await userHubConnection.invoke("SubscribeOrders", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeOrders error:", err.toString()));
-            await userHubConnection.invoke("SubscribePositions", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribePositions error:", err.toString()));
-            await userHubConnection.invoke("SubscribeTrades", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeTrades error:", err.toString()));
-            console.log("[Bridge][SignalR] ✅ User Hub subscriptions invoked.");
+            console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
+
+            // Temporarily comment out others:
+            // await userHubConnection.invoke("SubscribeOrders", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeOrders error:", err.toString()));
+            // await userHubConnection.invoke("SubscribePositions", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribePositions error:", err.toString()));
+            // await userHubConnection.invoke("SubscribeTrades", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeTrades error:", err.toString()));
+            
+            console.log("[Bridge][SignalR] ✅ User Hub subscriptions (partially) invoked.");
         } catch (err) {
             console.error("[Bridge][SignalR] ❌ Error invoking User Hub subscriptions:", err.message || err);
         }
