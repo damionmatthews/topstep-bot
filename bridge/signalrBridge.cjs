@@ -186,6 +186,7 @@ async function startUserHubConnection() {
 async function invokeUserHubSubscriptions() {
     if (userHubConnection && userHubConnection.state === HubConnectionState.Connected) {
         try {
+            const accountIdNum = parseInt(ACCOUNT_ID); 
             console.log(`[Bridge][SignalR] Invoking ONLY SubscribeAccounts for Account ID: ${accountIdNum}...`);
             await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
             console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
