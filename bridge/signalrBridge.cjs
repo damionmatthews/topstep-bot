@@ -73,12 +73,11 @@ function subscribeToUserHub() {
     .catch(err => console.error('[Bridge][SignalR] SubscribeTrades invoke error:', err));
 }
 
-// Express app for token updates and health checks
 const app = express();
 app.use(express.json());
 
 app.post('/update-token', (req, res) => {
-  const { access_token } = req.body;
+  const { access_token } = req.body; // It's looking for 'access_token'
   if (access_token) {
     console.log('[Bridge][HTTP] Token updated via /update-token');
     TOKEN = access_token;
