@@ -16,9 +16,7 @@ services:
       - key: ACCOUNT_ID
         value: 7715028
       - key: TOPSTEP_USERNAME
-        fromSecretKeyRef:
-          name: topstep-app-secrets
-          key: MY_TOPSTEP_USERNAME
+        key: dcminsf
       - key: CONTRACT_ID # If main.py needs a default or specific contract ID
         fromSecretKeyRef:
           name: topstep-app-secrets
