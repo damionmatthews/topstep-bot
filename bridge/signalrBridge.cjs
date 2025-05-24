@@ -196,24 +196,29 @@ async function invokeUserHubSubscriptions() {
             console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
             
 
-          await userHubConnection.invoke("SubscribeAccounts")
-    .then(() => console.log("[Bridge][SignalR] SubscribeAccounts call succeeded (promise resolved)."))
-    .catch(err => console.error("[Bridge][SignalR] SubscribeAccounts invoke error:", err.toString()));
-console.log("[Bridge][SignalR] SubscribeAccounts invoke attempt completed.");
-
-// await userHubConnection.invoke("SubscribeTrades", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeTrades error:", err.toString()));
-// console.log("[Bridge][SignalR] SubscribeTrades invoked.");
-
-// Temporarily comment out others:
-// await userHubConnection.invoke("SubscribeOrders", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeOrders error:", err.toString()));
-// await userHubConnection.invoke("SubscribePositions", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribePositions error:", err.toString()));
-          
-          await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
-          console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
+     // COMMENTED OUT:
+            // await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
+            // console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
             
-            console.log("[Bridge][SignalR] ✅ User Hub subscriptions (partially) invoked.");
+            // COMMENTED OUT:
+            // await userHubConnection.invoke("SubscribeAccounts")
+            //  .then(() => console.log("[Bridge][SignalR] SubscribeAccounts call succeeded (promise resolved)."))
+            //  .catch(err => console.error("[Bridge][SignalR] SubscribeAccounts invoke error:", err.toString()));
+            // console.log("[Bridge][SignalR] SubscribeAccounts invoke attempt completed.");
+
+            // COMMENTED OUT:
+            // await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
+            // console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
+
+            // --- TRY THIS ONE IN ISOLATION ---
+            await userHubConnection.invoke("SubscribeTrades", accountIdNum)
+                .then(() => console.log("[Bridge][SignalR] SubscribeTrades call succeeded (promise resolved)."))
+                .catch(err => console.error("[Bridge][SignalR] SubscribeTrades invoke error:", err.toString()));
+            console.log("[Bridge][SignalR] SubscribeTrades invoke attempt completed.");
+            
+            console.log("[Bridge][SignalR] ✅ User Hub subscriptions test finished.");
         } catch (err) {
-            console.error("[Bridge][SignalR] ❌ Error invoking User Hub subscriptions:", err.message || err);
+            console.error("[Bridge][SignalR] ❌ Error in invokeUserHubSubscriptions function:", err.message || err);
         }
     } else {
         console.warn("[Bridge][SignalR] Cannot invoke subscriptions: User Hub not connected or not in correct state.");
