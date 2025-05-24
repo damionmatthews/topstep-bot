@@ -131,7 +131,7 @@ async function startUserHubConnection() {
             transport: HttpTransportType.WebSockets
         })
         .withAutomaticReconnect([0, 3000, 10000, 30000, 60000, null]) // Added a 60s delay
-        .configureLogging(LogLevel.Information)
+        .configureLogging(LogLevel.Trace)
         .build();
 
     userHubConnection.on("GatewayUserTrade", (tradeEvent) => {
