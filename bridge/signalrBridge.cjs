@@ -80,27 +80,34 @@ app.use(express.json());
 app.post('/update-token', (req, res) => {
   const { access_token } = req.body;
   if (access_token) {
-    console.log('[Bridge][HTTP] Token updated.');
+    console.log('[Bridge][HTTP] Token updated via /update-token');
     TOKEN = access_token;
 
     if (connected) {
       console.log('[Bridge][HTTP] Reconnecting due to new token...');
-      connection.stop().then(() => startSignalRConnection());
+      connection.stop().then(() => {
+        console.log('[Bridge][HTTP] Restarting connection with new token...');
+        startSignalRConnection();
+      });
     } else {
+      console.log('[Bridge][HTTP] Starting connection with new token...');
       startSignalRConnection();
     }
 
     res.sendStatus(200);
   } else {
+    console.warn('[Bridge][HTTP] Token update failed: Missing token');
     res.status(400).send('Missing token');
   }
 });
 
 app.get('/health', (req, res) => {
+  console.log('[Bridge][HTTP] Health check received');
   res.send('OK');
 });
 
 app.listen(PORT, () => {
   console.log(`[Bridge][HTTP] Server listening on port ${PORT}. /update-token and /health active.`);
-  startSignalRConnection();
+  console.log('[Bridge][HTTP] Awaiting token via POST /update-token before starting SignalR...');
 });
+
