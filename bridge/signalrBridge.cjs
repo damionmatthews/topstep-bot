@@ -186,8 +186,12 @@ async function startUserHubConnection() {
 async function invokeUserHubSubscriptions() {
     if (userHubConnection && userHubConnection.state === HubConnectionState.Connected) {
         try {
-            const accountIdNum = parseInt(ACCOUNT_ID); 
-            console.log(`[Bridge][SignalR] Invoking ONLY SubscribeAccounts for Account ID: ${accountIdNum}...`);
+            const accountIdNum = parseInt(ACCOUNT_ID);
+                if (isNaN(accountIdNum)) {
+                console.error("[Bridge][SignalR] Invalid ACCOUNT_ID for subscriptions. ACCOUNT_ID from env was:", ACCOUNT_ID);
+                return;
+            }
+            console.log(`[Bridge][SignalR] Invoking User Hub subscriptions for Account ID: ${accountIdNum}...`);
             await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
             console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
             
