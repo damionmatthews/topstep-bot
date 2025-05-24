@@ -195,11 +195,14 @@ async function invokeUserHubSubscriptions() {
             await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
             console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
             
-            // await userHubConnection.invoke("SubscribeAccounts").catch(err => console.error("[Bridge][SignalR] SubscribeAccounts error:", err.toString()));
-// console.log("[Bridge][SignalR] SubscribeAccounts invoked.");
 
-await userHubConnection.invoke("SubscribeTrades", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeTrades error:", err.toString()));
-console.log("[Bridge][SignalR] SubscribeTrades invoked.");
+          await userHubConnection.invoke("SubscribeAccounts")
+    .then(() => console.log("[Bridge][SignalR] SubscribeAccounts call succeeded (promise resolved)."))
+    .catch(err => console.error("[Bridge][SignalR] SubscribeAccounts invoke error:", err.toString()));
+console.log("[Bridge][SignalR] SubscribeAccounts invoke attempt completed.");
+
+// await userHubConnection.invoke("SubscribeTrades", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeTrades error:", err.toString()));
+// console.log("[Bridge][SignalR] SubscribeTrades invoked.");
 
 // Temporarily comment out others:
 // await userHubConnection.invoke("SubscribeOrders", accountIdNum).catch(err => console.error("[Bridge][SignalR] SubscribeOrders error:", err.toString()));
