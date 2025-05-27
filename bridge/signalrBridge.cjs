@@ -1,11 +1,11 @@
 // signalrBridge.cjs
 const express = require('express');
 const { HubConnectionBuilder, HttpTransportType, LogLevel } = require('@microsoft/signalr');
-const axios = require('axios');
+const axios = require('axios'); // Used for sending events to n8n webhooks
 
 const PORT = 10000;
 const ACCOUNT_ID = process.env.ACCOUNT_ID; 
-const CONTRACT_ID = process.env.CONTRACT_ID; // <--- MAKE SURE THIS IS SET IN RENDER ENV VARS!
+const CONTRACT_ID = process.env.CONTRACT_ID; 
 
 const USER_HUB_URL = `https://rtc.topstepx.com/hubs/user`;
 const MARKET_HUB_URL = `https://rtc.topstepx.com/hubs/market`;
@@ -21,37 +21,37 @@ let userHubConnected = false;
 let marketHubConnected = false;
 
 // --- Helper to start a hub connection ---
-async function startHubConnection(hubName, hubUrl, connectionRefVarName, connectedFlagRef, subscribeFn) {
+async function startHubConnection(hubName, hubUrl, connectedFlagRef, subscribeFn) {
   console.log(`[Bridge] Initializing ${hubName} SignalR Bridge...`);
 
-  // --- Ensure previous connection is fully stopped before creating a new one ---
+  let connection;
   // Get the actual connection object from the global scope using its name
-  let existingConnection = null;
-  if (hubName === "User Hub") existingConnection = userHubConnection;
-  if (hubName === "Market Hub") existingConnection = marketHubConnection;
+  if (hubName === "User Hub") connection = userHubConnection;
+  else if (hubName === "Market Hub") connection = marketHubConnection;
 
-  if (existingConnection && existingConnection.state !== 'Disconnected') {
+  // Ensure previous connection is fully stopped before creating a new one
+  if (connection && connection.state !== 'Disconnected') {
       try {
-          console.log(`[Bridge][${hubName}] Stopping existing connection (${existingConnection.state})...`);
-          await existingConnection.stop();
+          console.log(`[Bridge][${hubName}] Stopping existing connection (${connection.state})...`);
+          await connection.stop();
           console.log(`[Bridge][${hubName}] Previous connection stopped.`);
       } catch (e) {
           console.warn(`[Bridge][${hubName}] Error stopping previous connection:`, e.message);
       } finally {
           // Clear the global reference after stopping
           if (hubName === "User Hub") userHubConnection = null;
-          if (hubName === "Market Hub") marketHubConnection = null;
+          else if (hubName === "Market Hub") marketHubConnection = null;
       }
   }
   
-  const connection = new HubConnectionBuilder()
+  connection = new HubConnectionBuilder()
     .withUrl(hubUrl, {
       skipNegotiation: true,
       transport: HttpTransportType.WebSockets,
       accessTokenFactory: () => currentTopstepToken,
       timeoutInMilliseconds: 60 * 1000 // 60 seconds handshake timeout
     })
-    .configureLogging(LogLevel.Trace)
+    .configureLogging(LogLevel.Trace) // Increased logging to Trace for more detail
     .withAutomaticReconnect({
       nextRetryDelayInMilliseconds: retryContext => {
         const delay = Math.min(30000, retryContext.previousRetryCount * 2000);
@@ -62,20 +62,13 @@ async function startHubConnection(hubName, hubUrl, connectionRefVarName, connect
     .build();
 
   // Assign connection object to the global reference NOW
-if (hubName === "User Hub") userHubConnection = connection;
-if (hubName === "Market Hub") marketHubConnection = connection;
-
-// --- Add a listener for the 'Connected' event (or 'ServerHandshakeComplete' if it exists) ---
-// This listener should only fire *after* the connection is fully ready for invocations.
-connection.on('Connected', () => { // This event name might need to be verified or adapted
-    console.log(`[Bridge][${hubName}] Connection state is now 'Connected'. Attempting subscriptions...`);
-    subscribeFn();
-});
+  if (hubName === "User Hub") userHubConnection = connection;
+  else if (hubName === "Market Hub") marketHubConnection = connection;
 
   // --- Event Listeners (Must be set BEFORE .start()) ---
   connection.onclose(error => {
     if (hubName === "User Hub") userHubConnected = false;
-    if (hubName === "Market Hub") marketHubConnected = false;
+    else if (hubName === "Market Hub") marketHubConnected = false;
     console.error(`[Bridge][${hubName}] Connection closed.`, error || 'No error specified');
   });
 
@@ -84,59 +77,44 @@ connection.on('Connected', () => { // This event name might need to be verified 
     subscribeFn();
   });
 
-  // Data forwarding listeners
+  // Data forwarding listeners (User Hub)
   if (hubName === "User Hub") {
     connection.on("GatewayUserTrade", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserTrade', data: data }));
     connection.on("GatewayUserOrder", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserOrder', data: data }));
     connection.on("GatewayUserPosition", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserPosition', data: data }));
     connection.on("GatewayUserAccount", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserAccount', data: data }));
-  } else if (hubName === "Market Hub") {
+  } 
+  // Data forwarding listeners (Market Hub)
+  else if (hubName === "Market Hub") {
     connection.on("GatewayQuote", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayQuote', data: data }));
     connection.on("GatewayTrade", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayTrade', data: data }));
     connection.on("GatewayDepth", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayDepth', data: data }));
   }
 
-  // ... onclose, onreconnected, etc. ...
-
-try {
+  try {
     console.log(`[Bridge][${hubName}] Starting connection...`);
     await connection.start(); 
     
-    if (connection.state === 'Connected') { // Check state after start resolves
-        if (hubName === "User Hub") userHubConnected = true;
-        if (hubName === "Market Hub") marketHubConnected = true;
-        console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
-        // subscribeFn(); // Don't call here if using connection.on('Connected')
-    } else {
-         // Handle case where start() resolves but state isn't Connected
-         throw new Error(`Connection started but state is not 'Connected': ${connection.state}`);
-    }
+    // Set connected flag
+    if (hubName === "User Hub") userHubConnected = true;
+    else if (hubName === "Market Hub") marketHubConnected = true;
     
- //  try {
- //    console.log(`[Bridge][${hubName}] Starting connection...`);
- //    await connection.start(); // This resolves AFTER handshake is complete
- //    
-  // Set connected flag
- //  if (hubName === "User Hub") userHubConnected = true;
- //  if (hubName === "Market Hub") marketHubConnected = true;
- //  
- //  console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
- //  
-  // --- IMMEDIATELY INVOKE SUBSCRIPTION, NO TIMEOUT ---
- //  subscribeFn(); 
+    console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
+    
+    // --- Call subscription function immediately after start() resolves ---
+    subscribeFn(); 
     
   } catch (err) {
     if (hubName === "User Hub") userHubConnected = false;
-    if (hubName === "Market Hub") marketHubConnected = false;
+    else if (hubName === "Market Hub") marketHubConnected = false;
     console.error(`[Bridge][${hubName}] Failed to connect:`, err);
-    // Retry connection after a delay
     setTimeout(() => startHubConnection(hubName, hubUrl, connectionRefVarName, connectedFlagRef, subscribeFn), 5000); 
   }
 }
 
 // --- Subscription Helper Functions ---
 function subscribeToUserHub() {
-  if (!userHubConnection || userHubConnection.state !== 'Connected') { // Check connection state explicitly
+  if (!userHubConnection || userHubConnection.state !== 'Connected') { 
     console.warn('[Bridge][UserHub] Cannot subscribe, User Hub not in Connected state.');
     return;
   }
@@ -146,10 +124,19 @@ function subscribeToUserHub() {
   }
 
   console.log(`[Bridge][UserHub] Invoking User Hub subscriptions for Account ID: ${ACCOUNT_ID}...`);
-  // Ensure invoke calls are robust against rapid disconnects by checking state again
-  userHubConnection.invoke('SubscribeAccounts') 
-    .then(() => console.log('[Bridge][UserHub] SubscribeAccounts invoked.'))
-    .catch(err => console.error('[Bridge][UserHub] SubscribeAccounts error:', err.message)); // Log only message
+  
+  // ProjectX docs mention 'SubscribeAccounts' without parameters for global accounts
+  // However, given the immediate disconnect, it might be safer to focus on specific, known subscriptions first.
+  // We will try subscribing to account-specific events first, which definitely use ACCOUNT_ID.
+  // If SubscribeAccounts() without ID is problematic, we remove it.
+
+  // NOTE: Your previous log shows SubscribeAccounts error: Invocation canceled...
+  // This indicates SubscribeAccounts() might be the culprit.
+  // We will TRY calling it with ACCOUNT_ID if that makes sense, or commenting it out.
+  // Based on ProjectX docs, "SubscribeAccounts" has no parameter, but "SubscribeOrders" does.
+  // Let's REMOVE the global SubscribeAccounts() for now, as it's causing issues.
+  // Then we will rely on specific account subscriptions.
+
   userHubConnection.invoke('SubscribeOrders', ACCOUNT_ID) 
     .then(() => console.log('[Bridge][UserHub] SubscribeOrders invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribeOrders error:', err.message));
@@ -159,10 +146,15 @@ function subscribeToUserHub() {
   userHubConnection.invoke('SubscribeTrades', ACCOUNT_ID) 
     .then(() => console.log('[Bridge][UserHub] SubscribeTrades invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribeTrades error:', err.message));
+
+  // If you later find you need global account updates, try re-adding:
+  // userHubConnection.invoke('SubscribeAccounts')
+  //   .then(() => console.log('[Bridge][UserHub] SubscribeAccounts invoked.'))
+  //   .catch(err => console.error('[Bridge][UserHub] SubscribeAccounts error:', err.message));
 }
 
 function subscribeToMarketHub() {
-  if (!marketHubConnection || marketHubConnection.state !== 'Connected') { // Check connection state explicitly
+  if (!marketHubConnection || marketHubConnection.state !== 'Connected') { 
     console.warn('[Bridge][MarketHub] Cannot subscribe, Market Hub not in Connected state.');
     return;
   }
@@ -190,11 +182,14 @@ async function sendEventToN8n(webhookUrl, payload) {
         return;
     }
     try {
-        // Using axios.post for HTTP POST request
         const response = await axios.post(webhookUrl, payload, {
             headers: { 'Content-Type': 'application/json' }
         });
-        // console.log(`[Bridge][N8N] Event sent to ${webhookUrl}: ${response.status}`); // Too verbose for production logs
+        if (!response.ok) { 
+             console.error(`[Bridge][N8N] Failed to send event to ${webhookUrl}: ${response.status} ${response.statusText} - Response: ${JSON.stringify(response.data)}`);
+        } else {
+             // console.log(`[Bridge][N8N] Event sent to ${webhookUrl}: ${response.status}`); // Too verbose for production logs
+        }
     } catch (error) {
         console.error(`[Bridge][N8N] Error sending event to ${webhookUrl}:`, error.message);
         if (error.response) { 
@@ -214,8 +209,8 @@ app.post('/update-token', (req, res) => {
     console.log('[Bridge][HTTP] Token updated via /update-token');
     currentTopstepToken = access_token;
 
-    // Start both hub connections with the new token
-    // These functions now handle stopping previous connections internally
+    // Call shared connection function for both hubs
+    // Pass the name of the global variable holding the connection reference
     startHubConnection("User Hub", USER_HUB_URL, "userHubConnection", userHubConnected, subscribeToUserHub);
     startHubConnection("Market Hub", MARKET_HUB_URL, "marketHubConnection", marketHubConnected, subscribeToMarketHub);
     
