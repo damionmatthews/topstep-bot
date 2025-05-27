@@ -62,8 +62,15 @@ async function startHubConnection(hubName, hubUrl, connectionRefVarName, connect
     .build();
 
   // Assign connection object to the global reference NOW
-  if (hubName === "User Hub") userHubConnection = connection;
-  if (hubName === "Market Hub") marketHubConnection = connection;
+if (hubName === "User Hub") userHubConnection = connection;
+if (hubName === "Market Hub") marketHubConnection = connection;
+
+// --- Add a listener for the 'Connected' event (or 'ServerHandshakeComplete' if it exists) ---
+// This listener should only fire *after* the connection is fully ready for invocations.
+connection.on('Connected', () => { // This event name might need to be verified or adapted
+    console.log(`[Bridge][${hubName}] Connection state is now 'Connected'. Attempting subscriptions...`);
+    subscribeFn();
+});
 
   // --- Event Listeners (Must be set BEFORE .start()) ---
   connection.onclose(error => {
@@ -89,18 +96,34 @@ async function startHubConnection(hubName, hubUrl, connectionRefVarName, connect
     connection.on("GatewayDepth", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayDepth', data: data }));
   }
 
-  try {
+  // ... onclose, onreconnected, etc. ...
+
+try {
     console.log(`[Bridge][${hubName}] Starting connection...`);
-    await connection.start(); // This resolves AFTER handshake is complete
+    await connection.start(); 
     
+    if (connection.state === 'Connected') { // Check state after start resolves
+        if (hubName === "User Hub") userHubConnected = true;
+        if (hubName === "Market Hub") marketHubConnected = true;
+        console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
+        // subscribeFn(); // Don't call here if using connection.on('Connected')
+    } else {
+         // Handle case where start() resolves but state isn't Connected
+         throw new Error(`Connection started but state is not 'Connected': ${connection.state}`);
+    }
+    
+ //  try {
+ //    console.log(`[Bridge][${hubName}] Starting connection...`);
+ //    await connection.start(); // This resolves AFTER handshake is complete
+ //    
   // Set connected flag
-  if (hubName === "User Hub") userHubConnected = true;
-  if (hubName === "Market Hub") marketHubConnected = true;
-  
-  console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
-  
+ //  if (hubName === "User Hub") userHubConnected = true;
+ //  if (hubName === "Market Hub") marketHubConnected = true;
+ //  
+ //  console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
+ //  
   // --- IMMEDIATELY INVOKE SUBSCRIPTION, NO TIMEOUT ---
-  subscribeFn(); 
+ //  subscribeFn(); 
     
   } catch (err) {
     if (hubName === "User Hub") userHubConnected = false;
