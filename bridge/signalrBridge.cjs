@@ -1,7 +1,7 @@
 // signalrBridge.cjs
 const express = require('express');
 const { HubConnectionBuilder, HttpTransportType, LogLevel } = require('@microsoft/signalr');
-const axios = require('axios'); // Used for sending events to n8n webhooks
+const axios = require('axios');
 
 const PORT = 10000;
 const ACCOUNT_ID = process.env.ACCOUNT_ID; 
@@ -21,11 +21,11 @@ let userHubConnected = false;
 let marketHubConnected = false;
 
 // --- Helper to start a hub connection ---
-async function startHubConnection(hubName, hubUrl, connectedFlagRef, subscribeFn) {
+async function startHubConnection(hubName, hubUrl, connectedFlagRef, subscribeFn) { // Removed connectionRefVarName parameter as it was causing issues.
+                                                                                // Access global connectionRef directly.
   console.log(`[Bridge] Initializing ${hubName} SignalR Bridge...`);
 
   let connection;
-  // Get the actual connection object from the global scope using its name
   if (hubName === "User Hub") connection = userHubConnection;
   else if (hubName === "Market Hub") connection = marketHubConnection;
 
@@ -44,14 +44,14 @@ async function startHubConnection(hubName, hubUrl, connectedFlagRef, subscribeFn
       }
   }
   
-  connection = new HubConnectionBuilder()
+  const newConnection = new HubConnectionBuilder() // Renamed to newConnection to avoid conflict with 'connection' variable above.
     .withUrl(hubUrl, {
       skipNegotiation: true,
       transport: HttpTransportType.WebSockets,
       accessTokenFactory: () => currentTopstepToken,
       timeoutInMilliseconds: 60 * 1000 // 60 seconds handshake timeout
     })
-    .configureLogging(LogLevel.Trace) // Increased logging to Trace for more detail
+    .configureLogging(LogLevel.Trace) // Kept Trace for more detail
     .withAutomaticReconnect({
       nextRetryDelayInMilliseconds: retryContext => {
         const delay = Math.min(30000, retryContext.previousRetryCount * 2000);
@@ -62,38 +62,38 @@ async function startHubConnection(hubName, hubUrl, connectedFlagRef, subscribeFn
     .build();
 
   // Assign connection object to the global reference NOW
-  if (hubName === "User Hub") userHubConnection = connection;
-  else if (hubName === "Market Hub") marketHubConnection = connection;
+  if (hubName === "User Hub") userHubConnection = newConnection;
+  else if (hubName === "Market Hub") marketHubConnection = newConnection;
 
   // --- Event Listeners (Must be set BEFORE .start()) ---
-  connection.onclose(error => {
+  newConnection.onclose(error => {
     if (hubName === "User Hub") userHubConnected = false;
     else if (hubName === "Market Hub") marketHubConnected = false;
     console.error(`[Bridge][${hubName}] Connection closed.`, error || 'No error specified');
   });
 
-  connection.onreconnected(() => {
+  newConnection.onreconnected(() => {
     console.log(`[Bridge][${hubName}] Reconnected! Re-subscribing...`);
     subscribeFn();
   });
 
   // Data forwarding listeners (User Hub)
   if (hubName === "User Hub") {
-    connection.on("GatewayUserTrade", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserTrade', data: data }));
-    connection.on("GatewayUserOrder", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserOrder', data: data }));
-    connection.on("GatewayUserPosition", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserPosition', data: data }));
-    connection.on("GatewayUserAccount", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserAccount', data: data }));
+    newConnection.on("GatewayUserTrade", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserTrade', data: data }));
+    newConnection.on("GatewayUserOrder", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserOrder', data: data }));
+    newConnection.on("GatewayUserPosition", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserPosition', data: data }));
+    newConnection.on("GatewayUserAccount", (data) => sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserAccount', data: data }));
   } 
   // Data forwarding listeners (Market Hub)
   else if (hubName === "Market Hub") {
-    connection.on("GatewayQuote", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayQuote', data: data }));
-    connection.on("GatewayTrade", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayTrade', data: data }));
-    connection.on("GatewayDepth", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayDepth', data: data }));
+    newConnection.on("GatewayQuote", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayQuote', data: data }));
+    newConnection.on("GatewayTrade", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayTrade', data: data }));
+    newConnection.on("GatewayDepth", (data) => sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayDepth', data: data }));
   }
 
   try {
     console.log(`[Bridge][${hubName}] Starting connection...`);
-    await connection.start(); 
+    await newConnection.start(); 
     
     // Set connected flag
     if (hubName === "User Hub") userHubConnected = true;
@@ -108,11 +108,12 @@ async function startHubConnection(hubName, hubUrl, connectedFlagRef, subscribeFn
     if (hubName === "User Hub") userHubConnected = false;
     else if (hubName === "Market Hub") marketHubConnected = false;
     console.error(`[Bridge][${hubName}] Failed to connect:`, err);
-    setTimeout(() => startHubConnection(hubName, hubUrl, connectionRefVarName, connectedFlagRef, subscribeFn), 5000); 
+    // --- FIX: Pass all arguments to setTimeout callback ---
+    setTimeout(() => startHubConnection(hubName, hubUrl, connectedFlagRef, subscribeFn), 5000); 
   }
 }
 
-// --- Subscription Helper Functions ---
+// --- Subscription Helper Functions (remain the same) ---
 function subscribeToUserHub() {
   if (!userHubConnection || userHubConnection.state !== 'Connected') { 
     console.warn('[Bridge][UserHub] Cannot subscribe, User Hub not in Connected state.');
@@ -124,19 +125,6 @@ function subscribeToUserHub() {
   }
 
   console.log(`[Bridge][UserHub] Invoking User Hub subscriptions for Account ID: ${ACCOUNT_ID}...`);
-  
-  // ProjectX docs mention 'SubscribeAccounts' without parameters for global accounts
-  // However, given the immediate disconnect, it might be safer to focus on specific, known subscriptions first.
-  // We will try subscribing to account-specific events first, which definitely use ACCOUNT_ID.
-  // If SubscribeAccounts() without ID is problematic, we remove it.
-
-  // NOTE: Your previous log shows SubscribeAccounts error: Invocation canceled...
-  // This indicates SubscribeAccounts() might be the culprit.
-  // We will TRY calling it with ACCOUNT_ID if that makes sense, or commenting it out.
-  // Based on ProjectX docs, "SubscribeAccounts" has no parameter, but "SubscribeOrders" does.
-  // Let's REMOVE the global SubscribeAccounts() for now, as it's causing issues.
-  // Then we will rely on specific account subscriptions.
-
   userHubConnection.invoke('SubscribeOrders', ACCOUNT_ID) 
     .then(() => console.log('[Bridge][UserHub] SubscribeOrders invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribeOrders error:', err.message));
@@ -146,11 +134,6 @@ function subscribeToUserHub() {
   userHubConnection.invoke('SubscribeTrades', ACCOUNT_ID) 
     .then(() => console.log('[Bridge][UserHub] SubscribeTrades invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribeTrades error:', err.message));
-
-  // If you later find you need global account updates, try re-adding:
-  // userHubConnection.invoke('SubscribeAccounts')
-  //   .then(() => console.log('[Bridge][UserHub] SubscribeAccounts invoked.'))
-  //   .catch(err => console.error('[Bridge][UserHub] SubscribeAccounts error:', err.message));
 }
 
 function subscribeToMarketHub() {
@@ -175,7 +158,7 @@ function subscribeToMarketHub() {
     .catch(err => console.error('[Bridge][MarketHub] SubscribeContractMarketDepth error:', err.message));
 }
 
-// --- Event Forwarding to n8n ---
+// --- Event Forwarding to n8n (remain the same) ---
 async function sendEventToN8n(webhookUrl, payload) {
     if (!webhookUrl) {
         console.error(`[Bridge][N8N] Webhook URL not defined for payload type: ${payload.type}. Skipping forwarding.`);
@@ -188,7 +171,7 @@ async function sendEventToN8n(webhookUrl, payload) {
         if (!response.ok) { 
              console.error(`[Bridge][N8N] Failed to send event to ${webhookUrl}: ${response.status} ${response.statusText} - Response: ${JSON.stringify(response.data)}`);
         } else {
-             // console.log(`[Bridge][N8N] Event sent to ${webhookUrl}: ${response.status}`); // Too verbose for production logs
+             // console.log(`[Bridge][N8N] Event sent to ${webhookUrl}: ${response.status}`); 
         }
     } catch (error) {
         console.error(`[Bridge][N8N] Error sending event to ${webhookUrl}:`, error.message);
@@ -198,9 +181,9 @@ async function sendEventToN8n(webhookUrl, payload) {
     }
 }
 
-// --- Express App Setup ---
+// --- Express App Setup (remain the same) ---
 const app = express();
-app.use(express.json()); // Middleware to parse JSON body
+app.use(express.json()); 
 
 // --- REST Endpoints ---
 app.post('/update-token', (req, res) => {
@@ -210,9 +193,8 @@ app.post('/update-token', (req, res) => {
     currentTopstepToken = access_token;
 
     // Call shared connection function for both hubs
-    // Pass the name of the global variable holding the connection reference
-    startHubConnection("User Hub", USER_HUB_URL, "userHubConnection", userHubConnected, subscribeToUserHub);
-    startHubConnection("Market Hub", MARKET_HUB_URL, "marketHubConnection", marketHubConnected, subscribeToMarketHub);
+    startHubConnection("User Hub", USER_HUB_URL, userHubConnected, subscribeToUserHub);
+    startHubConnection("Market Hub", MARKET_HUB_URL, marketHubConnected, subscribeToMarketHub);
     
     res.sendStatus(200); 
   } else {
@@ -230,7 +212,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// --- Start the Express server ---
+// --- Start the Express server (remain the same) ---
 app.listen(PORT, () => {
   console.log(`[Bridge][HTTP] Server listening on port ${PORT}. /update-token and /health active.`);
   console.log('[Bridge][HTTP] Awaiting token via POST /update-token before starting SignalR...');
