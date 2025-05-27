@@ -93,16 +93,14 @@ async function startHubConnection(hubName, hubUrl, connectionRefVarName, connect
     console.log(`[Bridge][${hubName}] Starting connection...`);
     await connection.start(); // This resolves AFTER handshake is complete
     
-    // Set connected flag
-    if (hubName === "User Hub") userHubConnected = true;
-    if (hubName === "Market Hub") marketHubConnected = true;
-    
-    console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
-    
-    // --- Attempt subscription after a very small, short delay ---
-    // This gives the client a tiny bit more time to settle if needed,
-    // but without delaying it too much that the server might close.
-    setTimeout(() => subscribeFn(), 100); // 100ms delay for subscriptions
+  // Set connected flag
+  if (hubName === "User Hub") userHubConnected = true;
+  if (hubName === "Market Hub") marketHubConnected = true;
+  
+  console.log(`[Bridge][${hubName}] ✅ SignalR Connected successfully.`);
+  
+  // --- IMMEDIATELY INVOKE SUBSCRIPTION, NO TIMEOUT ---
+  subscribeFn(); 
     
   } catch (err) {
     if (hubName === "User Hub") userHubConnected = false;
