@@ -51,7 +51,7 @@ async function startHubConnection(hubName, hubUrl, connectionRefVarName, connect
       accessTokenFactory: () => currentTopstepToken,
       timeoutInMilliseconds: 60 * 1000 // 60 seconds handshake timeout
     })
-    .configureLogging(LogLevel.Information)
+    .configureLogging(LogLevel.Trace)
     .withAutomaticReconnect({
       nextRetryDelayInMilliseconds: retryContext => {
         const delay = Math.min(30000, retryContext.previousRetryCount * 2000);
