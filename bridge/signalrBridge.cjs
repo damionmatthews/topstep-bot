@@ -4,15 +4,18 @@ const { HubConnectionBuilder, HttpTransportType, LogLevel } = require('@microsof
 const axios = require('axios'); // Used for sending events to n8n webhooks
 
 const PORT = 10000;
-const ACCOUNT_ID = process.env.ACCOUNT_ID; // Your TopstepX Account ID
-const CONTRACT_ID = process.env.CONTRACT_ID; // Your TopstepX Contract ID (e.g., CON.F.US.ENQ.M25)
+const ACCOUNT_ID = process.env.ACCOUNT_ID; // Your TopstepX Account ID from Render Environment
+const CONTRACT_ID = process.env.CONTRACT_ID; // Your TopstepX Contract ID (e.g., CON.F.US.ENQ.M25) from Render Environment
 
 const USER_HUB_URL = `https://rtc.topstepx.com/hubs/user`;
 const MARKET_HUB_URL = `https://rtc.topstepx.com/hubs/market`;
 
-// --- n8n Webhook URLs (CONFIGURE THESE) ---
-const N8N_USER_FILL_WEBHOOK_URL = process.env.N8N_USER_FILL_WEBHOOK_URL || 'https://your-n8n-url/webhook/topstepx-user-fill'; // For GatewayUserTrade, etc.
-const N8N_MARKET_DATA_WEBHOOK_URL = process.env.N8N_MARKET_DATA_WEBHOOK_URL || 'https://your-n8n-url/webhook/topstepx-market-data'; // For GatewayQuote, GatewayTrade, etc.
+// --- n8n Webhook URLs (CONFIGURE THESE AS RENDER ENVIRONMENT VARIABLES) ---
+// Define these in your Render service's Environment variables.
+// Example: N8N_USER_FILL_WEBHOOK_URL=https://your-n8n-domain/webhook/topstepx-user-fill
+// Example: N8N_MARKET_DATA_WEBHOOK_URL=https://your-n8n-domain/webhook/topstepx-market-data
+const N8N_USER_FILL_WEBHOOK_URL = process.env.N8N_USER_FILL_WEBHOOK_URL;
+const N8N_MARKET_DATA_WEBHOOK_URL = process.env.N8N_MARKET_DATA_WEBHOOK_URL;
 
 let currentTopstepToken = null;
 let userHubConnection = null;
@@ -32,20 +35,22 @@ async function startUserHubConnection() {
       skipNegotiation: true,
       transport: HttpTransportType.WebSockets,
       accessTokenFactory: () => {
-        console.log('[Bridge][UserHub] Providing access token:', currentTopstepToken ? '[REDACTED]' : '[MISSING]');
+        // Provide the current token for initial connection and reconnection
+        // console.log('[Bridge][UserHub] Providing access token:', currentTopstepToken ? '[REDACTED]' : '[MISSING]'); // Too verbose
         return currentTopstepToken;
       },
     })
-    .configureLogging(LogLevel.Debug)
+    .configureLogging(LogLevel.Information) // LogLevel.Debug for more verbose logs
     .withAutomaticReconnect({
       nextRetryDelayInMilliseconds: retryContext => {
         const delay = Math.min(30000, retryContext.previousRetryCount * 2000); // Max 30s delay
-        console.log(`[Bridge][UserHub] Retry in ${delay}ms`);
+        console.log(`[Bridge][UserHub] Attempting reconnect in ${delay}ms (attempt ${retryContext.previousRetryCount + 1})`);
         return delay;
       }
     })
     .build();
 
+  // --- User Hub Event Listeners (Must be set BEFORE .start()) ---
   userHubConnection.onclose(error => {
     userHubConnected = false;
     console.error('[Bridge][UserHub] Connection closed.', error || 'No error specified');
@@ -53,35 +58,35 @@ async function startUserHubConnection() {
 
   userHubConnection.onreconnected(() => {
     console.log('[Bridge][UserHub] Reconnected! Re-subscribing...');
-    subscribeToUserHub();
+    subscribeToUserHub(); // Re-subscribe on reconnected
   });
 
-  // --- User Hub Event Listeners and Forwarding ---
+  // Event handlers for data received from User Hub
   userHubConnection.on("GatewayUserTrade", (data) => {
     console.log('[Bridge][UserHub] Received GatewayUserTrade.');
     sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserTrade', data: data });
   });
   userHubConnection.on("GatewayUserOrder", (data) => {
     console.log('[Bridge][UserHub] Received GatewayUserOrder.');
-    sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserOrder', data: data }); // Or create a separate webhook for orders if needed
+    sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserOrder', data: data }); // Using same webhook for simplicity
   });
   userHubConnection.on("GatewayUserPosition", (data) => {
     console.log('[Bridge][UserHub] Received GatewayUserPosition.');
-    sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserPosition', data: data }); // Or separate webhook for positions
+    sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserPosition', data: data }); // Using same webhook for simplicity
   });
   userHubConnection.on("GatewayUserAccount", (data) => {
     console.log('[Bridge][UserHub] Received GatewayUserAccount.');
-    sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserAccount', data: data }); // Or separate webhook for accounts
+    sendEventToN8n(N8N_USER_FILL_WEBHOOK_URL, { type: 'GatewayUserAccount', data: data }); // Using same webhook for simplicity
   });
 
 
   try {
     console.log('[Bridge][UserHub] Starting connection...');
-    await userHubConnection.start();
+    await userHubConnection.start(); // Wait for the connection to fully start and handshake
     userHubConnected = true;
     console.log('[Bridge][UserHub] ✅ User Hub SignalR Connected successfully.');
-    // Delay subscription slightly to ensure connection is fully established
-    setTimeout(() => subscribeToUserHub(), 500); 
+    // --- CALL SUBSCRIBE DIRECTLY AFTER START() RESOLVES ---
+    subscribeToUserHub(); // Call immediately, as start() usually implies handshake complete
   } catch (err) {
     userHubConnected = false;
     console.error('[Bridge][UserHub] Failed to connect:', err);
@@ -98,20 +103,21 @@ async function startMarketHubConnection() {
       skipNegotiation: true,
       transport: HttpTransportType.WebSockets,
       accessTokenFactory: () => {
-        console.log('[Bridge][MarketHub] Providing access token:', currentTopstepToken ? '[REDACTED]' : '[MISSING]');
+        // console.log('[Bridge][MarketHub] Providing access token:', currentTopstepToken ? '[REDACTED]' : '[MISSING]'); // Too verbose
         return currentTopstepToken;
       },
     })
-    .configureLogging(LogLevel.Debug)
+    .configureLogging(LogLevel.Information) // LogLevel.Debug for more verbose logs
     .withAutomaticReconnect({
       nextRetryDelayInMilliseconds: retryContext => {
         const delay = Math.min(30000, retryContext.previousRetryCount * 2000); // Max 30s delay
-        console.log(`[Bridge][MarketHub] Retry in ${delay}ms`);
+        console.log(`[Bridge][MarketHub] Attempting reconnect in ${delay}ms (attempt ${retryContext.previousRetryCount + 1})`);
         return delay;
       }
     })
     .build();
 
+  // --- Market Hub Event Listeners (Must be set BEFORE .start()) ---
   marketHubConnection.onclose(error => {
     marketHubConnected = false;
     console.error('[Bridge][MarketHub] Connection closed.', error || 'No error specified');
@@ -122,7 +128,7 @@ async function startMarketHubConnection() {
     subscribeToMarketHub();
   });
 
-  // --- Market Hub Event Listeners and Forwarding ---
+  // Event handlers for data received from Market Hub
   marketHubConnection.on("GatewayQuote", (data) => {
     // console.log('[Bridge][MarketHub] Received GatewayQuote.'); // Too verbose for production logs
     sendEventToN8n(N8N_MARKET_DATA_WEBHOOK_URL, { type: 'GatewayQuote', data: data });
@@ -138,10 +144,11 @@ async function startMarketHubConnection() {
 
   try {
     console.log('[Bridge][MarketHub] Starting connection...');
-    await marketHubConnection.start();
+    await marketHubConnection.start(); // Wait for the connection to fully start and handshake
     marketHubConnected = true;
     console.log('[Bridge][MarketHub] ✅ Market Hub SignalR Connected successfully.');
-    setTimeout(() => subscribeToMarketHub(), 500);
+    // --- CALL SUBSCRIBE DIRECTLY AFTER START() RESOLVES ---
+    subscribeToMarketHub();
   } catch (err) {
     marketHubConnected = false;
     console.error('[Bridge][MarketHub] Failed to connect:', err);
@@ -149,28 +156,28 @@ async function startMarketHubConnection() {
   }
 }
 
-// --- Subscription Helpers ---
+// --- Subscription Helper Functions ---
 function subscribeToUserHub() {
   if (!userHubConnected) {
     console.warn('[Bridge][UserHub] Cannot subscribe, User Hub not connected.');
     return;
   }
   if (!ACCOUNT_ID) {
-    console.error('[Bridge][UserHub] ACCOUNT_ID is not defined. Cannot subscribe to user data.');
+    console.error('[Bridge][UserHub] ACCOUNT_ID is not defined in environment variables. Cannot subscribe to user data.');
     return;
   }
 
   console.log(`[Bridge][UserHub] Invoking User Hub subscriptions for Account ID: ${ACCOUNT_ID}...`);
-  userHubConnection.invoke('SubscribeAccounts', ACCOUNT_ID)
+  userHubConnection.invoke('SubscribeAccounts') // ProjectX docs may suggest ACCOUNT_ID, but general method doesn't always require it for all types
     .then(() => console.log('[Bridge][UserHub] SubscribeAccounts invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribeAccounts error:', err));
-  userHubConnection.invoke('SubscribeOrders', ACCOUNT_ID)
+  userHubConnection.invoke('SubscribeOrders', ACCOUNT_ID) // Requires Account ID as per ProjectX docs
     .then(() => console.log('[Bridge][UserHub] SubscribeOrders invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribeOrders error:', err));
-  userHubConnection.invoke('SubscribePositions', ACCOUNT_ID)
+  userHubConnection.invoke('SubscribePositions', ACCOUNT_ID) // Requires Account ID as per ProjectX docs
     .then(() => console.log('[Bridge][UserHub] SubscribePositions invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribePositions error:', err));
-  userHubConnection.invoke('SubscribeTrades', ACCOUNT_ID) // This is where fills come from
+  userHubConnection.invoke('SubscribeTrades', ACCOUNT_ID) // This is where fills come from, requires Account ID
     .then(() => console.log('[Bridge][UserHub] SubscribeTrades invoked.'))
     .catch(err => console.error('[Bridge][UserHub] SubscribeTrades error:', err));
 }
@@ -181,7 +188,7 @@ function subscribeToMarketHub() {
     return;
   }
   if (!CONTRACT_ID) {
-    console.error('[Bridge][MarketHub] CONTRACT_ID is not defined. Cannot subscribe to market data.');
+    console.error('[Bridge][MarketHub] CONTRACT_ID is not defined in environment variables. Cannot subscribe to market data.');
     return;
   }
 
@@ -199,15 +206,22 @@ function subscribeToMarketHub() {
 
 // --- Event Forwarding to n8n ---
 async function sendEventToN8n(webhookUrl, payload) {
+    if (!webhookUrl) {
+        console.error(`[Bridge][N8N] Webhook URL not defined for payload type: ${payload.type}. Skipping forwarding.`);
+        return;
+    }
     try {
         const response = await axios.post(webhookUrl, payload, {
             headers: { 'Content-Type': 'application/json' }
         });
-        // console.log(`[Bridge][N8N] Event sent to ${webhookUrl}: ${response.status}`); // Too verbose for production logs
+        if (!response.ok) { // axios throws an error for 4xx/5xx responses, so this check might not be hit if error is thrown
+             console.error(`[Bridge][N8N] Failed to send event to ${webhookUrl}: ${response.status} ${response.statusText} - Response: ${JSON.stringify(response.data)}`);
+        } else {
+             // console.log(`[Bridge][N8N] Event sent to ${webhookUrl}: ${response.status}`); // Too verbose for production logs
+        }
     } catch (error) {
         console.error(`[Bridge][N8N] Error sending event to ${webhookUrl}:`, error.message);
-        // Log more details about axios error if needed
-        if (error.response) {
+        if (error.response) { // Axios error has a response object
             console.error(`[Bridge][N8N] Response status: ${error.response.status}, data: ${JSON.stringify(error.response.data)}`);
         }
     }
@@ -225,23 +239,24 @@ app.post('/update-token', (req, res) => {
     currentTopstepToken = access_token;
 
     // Disconnect any existing connections first to ensure fresh start with new token
+    // (This is important to prevent using a stale token)
     if (userHubConnection && userHubConnection.state !== 'Disconnected') {
         userHubConnection.stop();
-        userHubConnection = null;
+        userHubConnection = null; // Clear reference to allow new connection
     }
     if (marketHubConnection && marketHubConnection.state !== 'Disconnected') {
         marketHubConnection.stop();
-        marketHubConnection = null;
+        marketHubConnection = null; // Clear reference to allow new connection
     }
 
-    // Start both hub connections with the new token
+    // Attempt to start both hub connections with the new token
     startUserHubConnection();
     startMarketHubConnection();
     
-    res.sendStatus(200);
+    res.sendStatus(200); // Send HTTP 200 OK
   } else {
     console.warn('[Bridge][HTTP] Token update failed: Missing token');
-    res.status(400).send('Missing token');
+    res.status(400).send('Missing token'); // Send HTTP 400 Bad Request
   }
 });
 
