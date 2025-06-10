@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Request, Form, BackgroundTasks, APIRouter
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field # Ensured Field is imported
-from typing import Optional, List, Any # Added List, Any for new handlers
+from typing import Optional, List, Any, Dict, Callable
+from pydantic import BaseModel, Field
 from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
@@ -307,14 +308,15 @@ async def status_endpoint_old(): # Renamed to avoid conflict
 
 # --- DATA MODEL ---
 class SignalAlert(BaseModel):
-    signal: str  # "long" or "short" still determines buy/sell side
-    ticker: Optional[str] = "NQ" # Default ticker
-    time: Optional[str] = None
-    order_type: str = Field(default="market", alias="orderType") # e.g., "market", "limit", "TrailingStop"
-    limit_price: Optional[float] = Field(default=None, alias="limitPrice")
-    stop_price: Optional[float] = Field(default=None, alias="stopPrice")
-    trailing_distance_ticks: Optional[int] = Field(default=None, alias="trailingDistance") # In ticks
-    quantity: Optional[int] = Field(default=None, alias="qty") # Allow overriding strategy trade size
+        signal: str
+        ticker: Optional[str] = "NQ"
+        time: Optional[str] = None
+        order_type: str = Field(default="market", alias="orderType")
+        limit_price: Optional[float] = Field(default=None, alias="limitPrice")
+        stop_price: Optional[float] = Field(default=None, alias="stopPrice")
+        trailing_distance_ticks: Optional[int] = Field(default=None, alias="trailingDistance")
+        quantity: Optional[int] = Field(default=None, alias="qty")
+        account_id: int = Field(alias="accountId") # Add this line
 
 class StatusResponse(BaseModel):
     trade_active: bool
@@ -402,7 +404,7 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
     if not api_client:
         raise TopstepAPIError("APIClient not initialized")
 
-    order_account_id = int(ACCOUNT_ID) # Global ACCOUNT_ID
+    order_account_id = alert.account_id # Use accountId from alert
     # Ensure alert.ticker is used if PROJECTX_CONTRACT_ID is not in strategy_cfg
     order_contract_id = strategy_cfg.get("PROJECTX_CONTRACT_ID") or alert.ticker
     if not order_contract_id:
@@ -412,23 +414,19 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
     order_side = "buy" if alert.signal.lower() == "long" else "sell"
 
     # Initialize with common parameters
-    pydantic_request_params = {
+pydantic_request_params = {
         "account_id": order_account_id,
         "contract_id": order_contract_id,
         "qty": order_quantity,
         "side": order_side,
-        "type": alert.order_type, # Use type directly from alert, assuming it's correct case e.g. "TrailingStop"
+        "type": alert.order_type,
     }
-
-    # Add type-specific parameters
     if alert.order_type.lower() == "limit":
-        if alert.limit_price is None:
-            raise ValueError("limit_price is required for a limit order.")
         pydantic_request_params["limit_price"] = alert.limit_price
-    elif alert.order_type == "TrailingStop": # Match exact case from API if necessary
-        if alert.trailing_distance_ticks is None:
-            raise ValueError("trailing_distance_ticks is required for a TrailingStop order.")
+    elif alert.order_type == "TrailingStop":
         pydantic_request_params["trailing_distance"] = alert.trailing_distance_ticks
+    elif alert.order_type.lower() == "stop":
+        pydantic_request_params["stop_price"] = alert.stop_price
     elif alert.order_type.lower() == "stop":
         if alert.stop_price is None:
             raise ValueError("stop_price is required for a stop order.")
