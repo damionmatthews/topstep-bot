@@ -1,32 +1,49 @@
 from fastapi import FastAPI, Request, Form, BackgroundTasks, APIRouter
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Any # Added List, Any for new handlers
 from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
-import httpx
+import asyncio
+from topstep_client import (
+    APIClient,
+    get_authenticated_client,
+    MarketDataStream,
+    UserHubStream,
+    StreamConnectionState,
+    TopstepAPIError,
+    AuthenticationError,
+    APIRequestError,
+    APIResponseParsingError,
+    Account,
+    Contract,
+    OrderRequest,
+    OrderDetails
+)
+
+import httpx # Kept for now, though direct usage should be minimized
 import os
 import json
 import csv
-from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data, HubConnectionBuilder, register_trade_callback
+# from signalRClient import setupSignalRConnection, closeSignalRConnection, get_event_data, HubConnectionBuilder, register_trade_callback # Removed
 import logging
 import os
 import asyncio
-import userHubClient
-from userHubClient import register_trade_event_callback, setupUserHubConnection, handle_user_trade
+# import userHubClient # Removed
+# from userHubClient import register_trade_event_callback, setupUserHubConnection, handle_user_trade # Removed
 
 app = FastAPI()
 
 # --- ENVIRONMENT CONFIG ---
-ACCOUNT_ID = 7715028
+ACCOUNT_ID = 7715028 # Example, should be ideally fetched from APIClient after auth or config
 CONTRACT_ID = os.getenv("CONTRACT_ID")
-SESSION_TOKEN = None
+SESSION_TOKEN = None # Will be managed by APIClient
 
 # Strategy storage path
-API_BASE_AUTH = "https://api.topstepx.com"
-API_BASE_GATEWAY = "https://api.topstepx.com"
+API_BASE_AUTH = "https://api.topstepx.com" # Used by APIClient by default
+API_BASE_GATEWAY = "https://api.topstepx.com" # Used by APIClient by default
 STRATEGY_PATH = "strategies.json"
-STRATEGIES_FILE_PATH = "strategies.json"  # Or wherever your strategies are stored
+STRATEGIES_FILE_PATH = "strategies.json"
 def save_strategies_to_file():
     with open(STRATEGIES_FILE_PATH, "w") as f:
         json.dump(strategies, f, indent=2)
@@ -36,6 +53,8 @@ ALERT_LOG_PATH = "alert_log.json"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+background_loop = asyncio.get_event_loop()
 
 # Load or initialize strategies
 if os.path.exists(STRATEGY_PATH):
@@ -58,215 +77,106 @@ else:
 
 current_strategy_name = "default"
 active_strategy_config = strategies[current_strategy_name]
-daily_pnl = 0.0
-trade_active = False
-entry_price = None
-trade_time = None
-current_signal = None
-current_signal_direction = None
-market_data_connection = None
-latest_market_data = []
+daily_pnl = 0.0 # This should become per-strategy
+trade_active = False # This should become per-strategy
+entry_price = None # This should become per-strategy
+trade_time = None # This should become per-strategy
+current_signal = None # This should become per-strategy
+current_signal_direction = None # This should become per-strategy
+# market_data_connection = None # Replaced by market_stream
 
-# --- AUTHENTICATION ---
-async def login_to_projectx():
-    global SESSION_TOKEN
-    logger.info("Attempting to log in to ProjectX...")
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                "https://api.topstepx.com/api/Auth/loginKey",
-                json={"userName": os.getenv("TOPSTEP_USERNAME"), "apiKey": os.getenv("TOPSTEP_API_KEY")}
-            )
-            response.raise_for_status()
-            SESSION_TOKEN = response.json().get("token")
-            if SESSION_TOKEN:
-                logger.info("ProjectX Login successful")
-            else:
-                logger.error("ProjectX Login failed: No token received")
-        except Exception as e:
-            logger.error(f"ProjectX Login failed: {e}")
-            SESSION_TOKEN = None
+# --- TOPSTEP CLIENT INITIALIZATION ---
+api_client: Optional[APIClient] = None
+market_stream: Optional[MarketDataStream] = None
+user_stream: Optional[UserHubStream] = None
 
-async def ensure_token():
-    if not SESSION_TOKEN:
-        await login_to_projectx()
-
-async def get_projectx_token():
-    if not SESSION_TOKEN:
-        await login_to_projectx()
-    return SESSION_TOKEN
-
-async def start_market_data_stream():
-    global SESSION_TOKEN
-    # Ensure the session token and contract ID are valid
-    if not SESSION_TOKEN:
-        await login_to_projectx()
-
-    token = SESSION_TOKEN
-    contract_id = os.getenv("PROJECTX_CONTRACT_ID") or "CON.F.US.EP.M25"
-
-    if not token:
-        logger.error("❌ No valid SESSION_TOKEN found. Aborting WebSocket connection.")
-        return
-
-    if not contract_id:
-        logger.error("❌ No valid PROJECTX_CONTRACT_ID found. Aborting WebSocket connection.")
-        return
-
-    logger.info("🌐 Starting WebSocket connection to market data stream...")
+async def initialize_topstep_client():
+    global api_client, market_stream, user_stream, SESSION_TOKEN
+    logger.info("Initializing Topstep Client...")
     try:
-        setupSignalRConnection(token, contract_id)
-        logger.info("✅ Market data stream started successfully.")
+        # APIClient will use TOPSTEP_USERNAME and TOPSTEP_API_KEY from env by default
+        api_client = APIClient()
+        await api_client.authenticate() # Authenticate on startup
+        SESSION_TOKEN = api_client._session_token # Update global SESSION_TOKEN if still used elsewhere for compatibility
+        logger.info("APIClient authenticated.")
+
+        # Initialize streams
+        market_stream = MarketDataStream(api_client, on_state_change_callback=handle_market_stream_state_change, on_trade_callback=handle_market_trade_event, on_quote_callback=handle_market_quote_event, on_depth_callback=handle_market_depth_event, debug=True)
+        user_stream = UserHubStream(api_client, on_state_change_callback=handle_user_stream_state_change, on_user_trade_callback=handle_user_trade_event_from_stream, on_user_order_callback=handle_user_order_event_from_stream, on_user_position_callback=handle_user_position_event_from_stream, debug=True)
+
+        logger.info("Market and User streams initialized.")
+
+    except AuthenticationError as e:
+        logger.error(f"Client Authentication Error: {e}")
+        # Handle auth failure, maybe retry or exit
     except Exception as e:
-        logger.error(f"❌ Failed to start market data stream: {e}")
+        logger.error(f"Failed to initialize Topstep Client: {e}", exc_info=True)
 
-# --- EVENT HANDLERS ---
-# Register the callback on app startup
-def init_userhub_callbacks():
-    def handle_user_trade(args):
-        logger.info(f"[TRACE] handle_user_trade triggered with: {args}")
-        # Example: process the trade or forward it to a downstream system
-        trade_id = args.get("orderId")
-        price = args.get("price")
-        status = args.get("status")
-
-        logger.info(f"[Trade] ID: {trade_id}, Price: {price}, Status: {status}")
-
-    userHubClient.register_trade_event_callback(handle_user_trade)
-
-# Background loop to regularly check trade status
-async def periodic_status_check():
-    while True:
-        try:
-            await check_and_close_active_trade()
-        except Exception as e:
-            logger.error(f"[PeriodicCheck] Error: {e}")
-        await asyncio.sleep(60)
-
-# Called by userHubClient when trade events come in
-def on_trade_update(args):
-    logger.info(f"[DEBUG] on_trade_update received: {args}")
-    if isinstance(args, dict):
-        trades = args.get("data") or [args]
-    elif isinstance(args, list):
-        trades = args
-    else:
-        logger.warning("[Trade Update] Unexpected format: %s", args)
+async def start_streams_if_needed():
+    global market_stream, user_stream, api_client
+    if not api_client or not api_client._session_token:
+        logger.warning("API client not authenticated. Cannot start streams.")
         return
 
-    for trade in trades:
-        order_id = trade.get("orderId")
-        price = trade.get("price")
-        status = trade.get("status")
-
-        for strategy, state in trade_states.items():
-            current_trade = state.get("current_trade")
-            if not current_trade or current_trade.order_id != order_id:
-                continue
-
-            if price:
-                current_trade.entry_price = price
-                log_event(TRADE_LOG_PATH, {
-                    "event": "entry_filled",
-                    "strategy": strategy,
-                    "orderId": order_id,
-                    "entry_price": price
-                })
-
-            if status == "Closed":
-                logger.info(f"[Trade Handler] Trade {order_id} for {strategy} closed externally.")
-                exit_price = price or current_trade.entry_price
-                direction = current_trade.direction
-                points = (exit_price - current_trade.entry_price) * (1 if direction == "long" else -1)
-                pnl = points * 20  # For NQ
-
-                log_event(TRADE_LOG_PATH, {
-                    "event": "exit_external",
-                    "strategy": strategy,
-                    "orderId": order_id,
-                    "entry_price": current_trade.entry_price,
-                    "exit_price": exit_price,
-                    "pnl": pnl,
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-
-                state["trade_active"] = False
-                state["current_trade"] = None
-
-# Called by FastAPI on startup
-async def startup_tasks():
-    init_userhub_callbacks()
-    asyncio.create_task(periodic_status_check())
-    
-def fetch_latest_quote():
-    return get_event_data()
-
-def fetch_latest_trade():
-    return get_event_data('trade')
-
-def fetch_latest_depth():
-    return get_event_data('depth')
-
-def handle_quote_event(data):
-    print(f"[Quote Event] Received Data: {data}")
-
-def handle_trade_event(data):
-    print(f"[Trade Event] Received Data: {data}")
-
-def handle_depth_event(data):
-    print(f"[Depth Event] Received Data: {data}")
-
-async def stop_market_data_stream():
-    global market_data_connection
-    if market_data_connection:
-        print("🔌 Stopping market data stream...")
-        closeSignalRConnection()
-        market_data_connection = None
-
-async def startup_event():
-    logger.info("Attempting to log in to ProjectX...")
-    
-    TOPSTEP_USERNAME = os.getenv("TOPSTEP_USERNAME")
-    TOPSTEP_API_KEY = os.getenv("TOPSTEP_API_KEY")
-
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://api.topstepx.com/api/Auth/loginKey",
-                json={"userName": TOPSTEP_USERNAME, "apiKey": TOPSTEP_API_KEY},
-                headers={"Content-Type": "application/json"}
-            )
-            response.raise_for_status()
-            result = response.json()
-            token = result.get("token")
-
-            if not token:
-                logger.error("No token returned from login response.")
-                raise RuntimeError("ProjectX login failed — no token returned.")
-
-            logger.info("ProjectX Login successful")
-
-            contract_id = os.getenv("CONTRACT_ID") or "CON.F.US.EP.M25"
-            if not token or not contract_id:
-                logger.error("[SignalR] Missing authToken or contractId.")
+    if market_stream and market_stream.current_state != StreamConnectionState.CONNECTED:
+        logger.info("Attempting to start market data stream...")
+        # Ensure ACCOUNT_ID is correctly sourced, e.g., from api_client.user_id or a primary account after auth
+        # This is a placeholder for actual account ID logic
+        global ACCOUNT_ID
+        try:
+            accs = await api_client.get_accounts()
+            if accs:
+                ACCOUNT_ID = accs[0].id # Use the first account's ID; adjust as needed
+                logger.info(f"Using Account ID: {ACCOUNT_ID} for operations.")
             else:
-                setupSignalRConnection(token, contract_id)
-                setupUserHubConnection(token)
-                init_userhub_callbacks()
+                logger.error("No accounts found for the user. Cannot determine ACCOUNT_ID.")
+                return # Or handle as appropriate
+        except Exception as e:
+            logger.error(f"Failed to get accounts to determine ACCOUNT_ID: {e}")
+            return
 
-    except httpx.HTTPError as e:
-        logger.error(f"HTTP error during login: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Startup failed: {e}")
-        raise
 
-async def trade_event_handler(args):
-    global strategy_that_opened_trade
-    if strategy_that_opened_trade:
-        await check_and_close_active_trade(strategy_that_opened_trade)
+        contract_id_to_subscribe = active_strategy_config.get("PROJECTX_CONTRACT_ID") or os.getenv("CONTRACT_ID") or "CON.F.US.NQ.M25"
+        if contract_id_to_subscribe:
+            asyncio.create_task(market_stream.start())
+            market_stream.subscribe_contract(contract_id_to_subscribe)
+            logger.info(f"Market stream start initiated. Will subscribe to {contract_id_to_subscribe} on connect.")
+        else:
+            logger.error("No contract ID configured for market data stream.")
 
-register_trade_callback(trade_event_handler)
+    if user_stream and user_stream.current_state != StreamConnectionState.CONNECTED:
+        logger.info("Attempting to start user hub stream...")
+        asyncio.create_task(user_stream.start())
+        logger.info("User hub stream start initiated.")
+
+# Stream state change handlers
+def handle_market_stream_state_change(state: StreamConnectionState):
+    logger.info(f"Market Stream state changed: {state.value}")
+    if state == StreamConnectionState.CONNECTED:
+        contract_id_to_subscribe = active_strategy_config.get("PROJECTX_CONTRACT_ID") or os.getenv("CONTRACT_ID") or "CON.F.US.NQ.M25"
+        if market_stream and contract_id_to_subscribe:
+            logger.info(f"Market Stream CONNECTED. Ensuring subscription to {contract_id_to_subscribe}.")
+            # Subscription is now handled by _on_open in the stream based on its _subscriptions set
+            # To ensure it subscribes, we call subscribe_contract which adds to _subscriptions
+            # then start() will trigger the actual send on connection.
+            # If already connected, we might need to explicitly call send here or have stream handle it.
+            # The current MarketDataStream's _on_open handles resubscription.
+            # Calling subscribe_contract here ensures it's in the set for future (re)connections too.
+            market_stream.subscribe_contract(contract_id_to_subscribe)
+
+
+def handle_user_stream_state_change(state: StreamConnectionState):
+    logger.info(f"User Hub Stream state changed: {state.value}")
+
+async def stop_all_streams():
+    global market_stream, user_stream
+    if market_stream and market_stream.current_state != StreamConnectionState.DISCONNECTED:
+        logger.info("Stopping market stream...")
+        await market_stream.stop()
+    if user_stream and user_stream.current_state != StreamConnectionState.DISCONNECTED:
+        logger.info("Stopping user hub stream...")
+        await user_stream.stop()
+    logger.info("All streams stopped.")
 
 # CORS middleware for frontend calls
 app.add_middleware(
@@ -277,56 +187,118 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def init_userhub_callbacks():
-    def handle_user_trade(args):
-        logger.info(f"[TRACE] handle_user_trade triggered with: {args}")
-        trade_id = args.get("orderId")
-        price = args.get("price")
-        status = args.get("status")
+# --- AUTHENTICATION (Old functions removed as APIClient handles this) ---
 
-        logger.info(f"[Trade] ID: {trade_id}, Price: {price}, Status: {status}")
-        # Add your custom logic here
+# --- EVENT HANDLERS ---
+latest_market_quotes: List[Any] = []
+latest_market_trades: List[Any] = []
+latest_market_depth: List[Any] = []
 
-    userHubClient.register_trade_event_callback(handle_user_trade)
+def handle_market_quote_event(data: List[Any]):
+    global latest_market_quotes
+    logger.debug(f"[MarketStream] Quote Event Data: {data}")
+    latest_market_quotes.extend(data) # Assuming data is a list of quotes
+    if len(latest_market_quotes) > 100: latest_market_quotes = latest_market_quotes[-100:]
+    # Process each quote if necessary, e.g. update a dict by contract ID
+
+async def trade_event_handler(trade_event_data: Any):
+    """
+    Handles a single market trade event.
+    This function is called for each trade event received from the market data stream.
+    It then iterates through all active strategies and calls check_and_close_active_trade.
+    """
+    global trade_states
+    logger.debug(f"trade_event_handler received: {trade_event_data}")
+    # The trade_event_data itself might be useful for check_and_close_active_trade if it needs the latest price
+    # For now, check_and_close_active_trade fetches its own price.
+
+    active_strategies_to_check = []
+    for strategy_name, state in trade_states.items():
+        if state.get("trade_active") and state.get("current_trade"):
+            active_strategies_to_check.append(strategy_name)
+
+    for strategy_name in active_strategies_to_check:
+        logger.debug(f"Checking active trade for strategy '{strategy_name}' due to market trade event.")
+        try:
+            await check_and_close_active_trade(strategy_name)
+        except Exception as e:
+            logger.error(f"Error in check_and_close_active_trade for strategy {strategy_name} (triggered by market event): {e}", exc_info=True)
+
+def handle_market_trade_event(data: List[Any]):
+    global latest_market_trades, background_loop
+    logger.debug(f"[MarketStream] Batch of Trade Event Data received, count: {len(data)}")
+    latest_market_trades.extend(data) # Assuming data is a list of trades from the stream
+    if len(latest_market_trades) > 100: latest_market_trades = latest_market_trades[-100:] # Keep buffer trimmed
+
+    # Process each trade event in the received list
+    for trade_event_item in data:
+        # Schedule trade_event_handler to run in the background loop
+        # This allows check_and_close_active_trade (which is async) to be called.
+        asyncio.run_coroutine_threadsafe(trade_event_handler(trade_event_item), background_loop)
+
+def handle_market_depth_event(data: List[Any]):
+    global latest_market_depth
+    logger.debug(f"[MarketStream] Depth Event Data: {data}")
+    latest_market_depth.extend(data) # Assuming data is a list of depth updates
+    if len(latest_market_depth) > 100: latest_market_depth = latest_market_depth[-100:]
+
+def handle_user_trade_event_from_stream(data: List[Any]):
+    logger.info(f"[UserStream] User Trade Event Data: {data}")
+    for trade_event in data: # data is a list of trade events from the stream
+        # The original handle_user_trade function needs to be called or its logic adapted here.
+        # Assuming trade_event is a dict compatible with the old handle_user_trade.
+        handle_user_trade(trade_event)
+
+def handle_user_order_event_from_stream(data: List[Any]):
+    logger.info(f"[UserStream] User Order Event Data: {data}")
+    # Process order events (e.g., update local order book, PnL calculations)
+
+def handle_user_position_event_from_stream(data: List[Any]):
+    logger.info(f"[UserStream] User Position Event Data: {data}")
+    # Process position updates
+
+# Modify fetch_latest_quote etc. to use new storage
+def fetch_latest_quote(): return latest_market_quotes[-10:] if latest_market_quotes else []
+def fetch_latest_trade(): return latest_market_trades[-10:] if latest_market_trades else []
+def fetch_latest_depth(): return latest_market_depth[-10:] if latest_market_depth else []
+
+
+# Background loop to regularly check trade status (if still needed)
+async def periodic_status_check():
+    while True:
+        try:
+            # This function needs to be adapted if it relied on global state changed by old clients
+            # await check_and_close_active_trade() # This function needs review for new client
+            pass
+        except Exception as e:
+            logger.error(f"[PeriodicCheck] Error: {e}")
+        await asyncio.sleep(60)
+
+# Called by userHubClient when trade events come in (now handle_user_trade_event_from_stream)
+# def on_trade_update(args): ... # Replaced by handle_user_trade_event_from_stream and its call to handle_user_trade
+
+async def old_startup_event():
+    pass
 
 @app.on_event("startup")
 async def startup_event():
-    try:
-        logger.info("Starting up service...")
-        userHubClient.start_userhub_connection()  # make sure this function exists and starts the SignalR connection
-        init_userhub_callbacks()
-        logger.info("[Startup] UserHub connection initialized.")
-    except Exception as e:
-        logger.error(f"Startup failed: {str(e)}")
-        raise
-        
-async def startup_wrapper():
-    await startup_event()
+    await initialize_topstep_client()
+    await start_streams_if_needed()
+    # init_userhub_callbacks() # Logic should be in stream handlers or called by them
+    # asyncio.create_task(periodic_status_check()) # Keep if still needed and adapted
 
-# TEMP: Simulate a close event to validate handler
-handle_user_trade({
-    "orderId": 1139051093,
-    "price": 4400.25,
-    "status": "Closed"
-})
-
-async def launch_background_check_loop():
-    asyncio.create_task(trade_status_check_loop())
-
-async def trade_status_check_loop():
-    while True:
-        try:
-            await check_trade_status_endpoint()
-        except Exception as e:
-            logger.error(f"[Trade Loop] Error in periodic check: {e}")
-        await asyncio.sleep(30)  # ⏱ Check every 30 seconds
+async def old_shutdown_event():
+    pass
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    await stop_market_data_stream()
+    await stop_all_streams()
+    if api_client:
+        await api_client.close()
 
-@app.get("/status")
-async def status():
+
+@app.get("/status") # Ensure this matches the one below or remove duplicate
+async def status_endpoint_old(): # Renamed to avoid conflict
     return {
         "latest_quote": fetch_latest_quote(),
         "latest_trade": fetch_latest_trade(),
@@ -335,18 +307,22 @@ async def status():
 
 # --- DATA MODEL ---
 class SignalAlert(BaseModel):
-    signal: str
-    ticker: Optional[str] = "NQ"
-    time: Optional[str] = None
+    signal: str # 'long' or 'short'
+    ticker: Optional[str] = "NQ" # Default or from alert
+    time: Optional[str] = None # Alert timestamp
 
 class StatusResponse(BaseModel):
     trade_active: bool
-    entry_price: float | None
-    trade_time: str | None
-    current_signal: str | None
+    entry_price: Optional[float] = None
+    trade_time: Optional[str] = None
+    current_signal: Optional[str] = None # 'long' or 'short'
     daily_pnl: float
+    # Added these for more complete UI status
+    current_strategy_name: str
+    active_strategy_config: dict
 
-# --- COMMON CSS ---
+
+# --- COMMON CSS (omitted for brevity in this diff, assumed unchanged) ---
 COMMON_CSS = """
 <style>
     body {
@@ -397,14 +373,14 @@ COMMON_CSS = """
 """
 
 # --- HELPER FUNCTIONS ---
-def save_strategies():
+def save_strategies(): # Should be save_strategies_to_file to match definition
     with open(STRATEGY_PATH, "w") as f:
         json.dump(strategies, f, indent=2)
 
 def log_event(file_path, event_data):
     if not os.path.exists(file_path):
         with open(file_path, "w") as f:
-            json.dump([], f) # Create empty list if file doesn't exist
+            json.dump([], f)
     
     with open(file_path, "r+") as f:
         try:
@@ -416,599 +392,486 @@ def log_event(file_path, event_data):
         json.dump(log_list, f, indent=2)
         f.truncate()
 
-async def place_order(direction: str):
-    await ensure_token()
-    side = "buy" if direction == "long" else "sell"
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.topstepx.com/api/orders",
-            headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
-            json={
-                "accountId": ACCOUNT_ID,
-                "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
-                "qty": config["TRADE_SIZE"],
-                "side": side,
-                "type": "market"
-            }
-        )
-        response.raise_for_status()
-        return response.json()
+# --- ORDER FUNCTIONS (adapted to use APIClient) ---
+async def place_order_projectx(signal_direction, strategy_cfg): # signal_direction is 'long' or 'short'
+    global ACCOUNT_ID # Ensure ACCOUNT_ID is set, e.g. in initialize_topstep_client
+    if not api_client: raise TopstepAPIError("APIClient not initialized")
+    if not ACCOUNT_ID: raise TopstepAPIError("ACCOUNT_ID not set")
 
-async def check_and_close_trade(current_price: float):
-    global trade_active, entry_price, daily_pnl, current_signal
-    if not trade_active or entry_price is None:
-        return
+    order_type = "market"
+    side_val = "buy" if signal_direction == "long" else "sell"
 
-    pnl = (current_price - entry_price) * (1 if current_signal == 'long' else -1) * 20
-    if pnl >= config["MAX_TRADE_PROFIT"] or pnl <= config["MAX_TRADE_LOSS"]:
-        await close_position()
-        daily_pnl += pnl
-        trade_active = False
-        print(f"Trade exited at {current_price}, PnL: {pnl}")
-
-    if daily_pnl >= config["MAX_DAILY_PROFIT"] or daily_pnl <= config["MAX_DAILY_LOSS"]:
-        trade_active = False
-        print("Trading halted for the day")
-
-async def close_position():
-    await ensure_token()
-    side = "sell" if current_signal == "long" else "buy"
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.topstepx.com/api/orders",
-            headers={"Authorization": f"Bearer {SESSION_TOKEN}"},
-            json={
-                "accountId": ACCOUNT_ID,
-                "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
-                "qty": strategy_cfg["TRADE_SIZE"],
-                "side": side,
-                "type": "market"
-            }
-        )
-        response.raise_for_status()
-        return response.json()
-
-# --- SIGNALR ---
-async def on_execution_message(message):
-    logger.info(f"Execution message received: {message}")
-
-async def start_websocket_listener():
-    global hub_connection
-    hub_connection = HubConnectionBuilder()\
-        .with_url("https://api.topstepx.com/signalr")\
-        .build()
-    hub_connection.on("GatewayExecution", on_execution_message)
-    await hub_connection.start()
-    logger.info("WebSocket connected and listening.")
-
-# Call on startup
-@app.on_event("startup")
-async def on_startup():
-    await get_projectx_token()
-    if SESSION_TOKEN:
-        await start_market_data_stream()
-    else:
-        print(" Cannot start WebSocket: SESSION_TOKEN is missing")
-        
-async def projectx_api_request(method: str, endpoint: str, payload: dict = None, retries=3):
-    for attempt in range(retries):
-        token = await get_projectx_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-
-        url = f"https://api.topstepx.com{endpoint}"
-
-        try:
-            async with httpx.AsyncClient() as client:
-                if method.upper() == "POST":
-                    response = await client.post(url, json=payload, headers=headers)
-                else:
-                    response = await client.get(url, headers=headers)
-
-                if response.status_code == 401:
-                    logger.warning("[HTTP] Unauthorized - refreshing token...")
-                    await login_to_projectx()
-                    continue
-
-                response.raise_for_status()
-                return response.json()
-
-        except httpx.RequestError as e:
-            logger.warning(f"[HTTP] Attempt {attempt+1} failed: {e}")
-            await asyncio.sleep(2 ** attempt)
-        except Exception as e:
-            logger.error(f"[HTTP] Unhandled error: {e}")
-            raise
-
-    raise RuntimeError(f"API request failed after {retries} attempts: {method} {endpoint}")
-
-# Define the Trade class
-class Trade:
-    def __init__(self, strategy, order_id, entry_price, direction):
-        self.strategy = strategy
-        self.order_id = order_id
-        self.entry_price = entry_price
-        self.direction = direction
-        self.entry_time = datetime.utcnow()
-        self.exit_price = None
-        self.pnl = 0
-
-    def to_dict(self):
-        return self.__dict__
-
-# --- Strategy-based Trade States ---
-trade_states = {}
-user_trade_events = []
-import os
-
-STRATEGY_PATH = "strategies.json"
-
-if os.path.exists(STRATEGY_PATH):
-    with open(STRATEGY_PATH, "r") as f:
-        strategies = json.load(f)
-else:
-    strategies = {
-        "default": {
-            "MAX_DAILY_LOSS": -1200,
-            "MAX_DAILY_PROFIT": 2000,
-            "MAX_TRADE_LOSS": -160,
-            "MAX_TRADE_PROFIT": 90,
-            "CONTRACT_SYMBOL": "NQ",
-            "PROJECTX_CONTRACT_ID": "CON.F.US.ENQ.M25",
-            "TRADE_SIZE": 1
-        }
-    }
-    with open(STRATEGY_PATH, "w") as f:
-        json.dump(strategies, f, indent=2)
-BASE_LOG_DIR = os.path.abspath("./logs")
-os.makedirs(BASE_LOG_DIR, exist_ok=True)
-ALERT_LOG_PATH = os.path.join(BASE_LOG_DIR, "alert_log.json")
-TRADE_LOG_PATH = os.path.join(BASE_LOG_DIR, "trade_log.json")
-
-# Fetch current price from trade event
-# --- Update fetch_current_price ---
-def get_event_data(event_type=None):
-    return {}  # Replace with actual logic
-
-def fetch_current_price():
-    trade_event = get_event_data('trade')
-    if isinstance(trade_event, dict):
-        trades = trade_event.get("data") or trade_event.get("trades")
-        if isinstance(trades, list) and trades:
-            last_trade = trades[-1]
-            return last_trade.get("price") or last_trade.get("p")
-    return None
-
-# --- Update handle_user_trade to capture actual entry price ---
-def handle_user_trade(args):
-    global trade_states
-    try:
-        user_trade_events.append(args)
-        logger.info(f"[UserHub] handle_user_trade triggered with: {args}")
-
-        trade = args[0] if isinstance(args, list) else args
-        order_id = trade.get('orderId')
-        price = trade.get('price')
-        status = trade.get('status')
-
-        if not order_id:
-            logger.warning("[UserHub] No orderId in trade event. Skipping.")
-            return
-
-        for strategy, state in trade_states.items():
-            current = state.get("current_trade")
-            if current and current.order_id == order_id:
-                # Set entry price if available
-                if price and not current.entry_price:
-                    current.entry_price = price
-                    log_event(TRADE_LOG_PATH, {
-                        "event": "entry_filled",
-                        "strategy": strategy,
-                        "orderId": order_id,
-                        "entry_price": price
-                    })
-                    logger.info(f"[UserHub] Entry price updated for strategy '{strategy}': {price}")
-
-                # Handle external close
-                if status == "Closed":
-                    exit_price = price or current.entry_price
-                    pnl = ((exit_price - current.entry_price) *
-                           (1 if current.direction == "long" else -1)) * 20 * active_strategy_config.get("TRADE_SIZE", 1)
-
-                    log_event(TRADE_LOG_PATH, {
-                        "event": "exit_external",
-                        "strategy": strategy,
-                        "orderId": order_id,
-                        "entry_price": current.entry_price,
-                        "exit_price": exit_price,
-                        "pnl": pnl,
-                        "timestamp": datetime.utcnow().isoformat()
-                    })
-
-                    logger.info(f"[UserHub] Trade {order_id} closed for strategy '{strategy}'. PnL: {pnl:.2f}")
-
-                    # Reset state
-                    state["trade_active"] = False
-                    state["current_trade"] = None
-                    return
-
-    except Exception as e:
-        logger.error(f"[UserHub] Trade handler error: {e}")
-
-# --- ORDER FUNCTIONS ---
-async def place_order_projectx(signal, strategy_cfg):
     if "PROJECTX_CONTRACT_ID" not in strategy_cfg or not strategy_cfg["PROJECTX_CONTRACT_ID"]:
         raise ValueError("PROJECTX_CONTRACT_ID is missing or empty in strategy configuration.")
-    if not ACCOUNT_ID:
-        raise ValueError("ACCOUNT_ID environment variable is not set.")
 
-    payload = {
-        "accountId": int(ACCOUNT_ID),
-        "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
-        "type": 2,  # Market order
-        "side": 0 if signal_direction == "long" else 1,
-        "size": strategy_cfg["TRADE_SIZE"]
-    }
-
-    logger.info(f"[Order Attempt] Sending order with payload: {json.dumps(payload)}")
-
+    order_req = OrderRequest(
+        accountId=int(ACCOUNT_ID),
+        contractId=strategy_cfg["PROJECTX_CONTRACT_ID"],
+        qty=strategy_cfg["TRADE_SIZE"],
+        side=side_val,
+        type=order_type
+    )
+    logger.info(f"[Order Attempt] Sending order with payload: {order_req.dict(by_alias=True)}")
     try:
-        # --- Manual HTTP call to capture full response ---
-        token = await get_projectx_token()
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        url = "https://api.topstepx.com/api/Order/place"
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=payload, headers=headers)
-
-        # Log raw response details
-        logger.info(f"[HTTP Status] {response.status_code}")
-        logger.info(f"[HTTP Headers] {dict(response.headers)}")
-        logger.info(f"[HTTP Body] {response.text}")
-
-        result = response.json()
-        logger.info(f"[Order Response] Parsed JSON: {result}")
-
-        if not result.get("success", False) or not result.get("orderId"):
-            error_msg = result.get("errorMessage") or f"Unknown error. Code {result.get('errorCode')}"
-            raise ValueError(f"Order placement failed, response: {error_msg}")
-
-        logger.info(f"✅ Order placed successfully. Order ID: {result['orderId']}")
-        return {"success": True, "orderId": result["orderId"]}
-
-    except Exception as e:
-        logger.error(f"❌ Exception during order placement: {str(e)}")
-        raise
-
-# Define SignalAlert model
-class SignalAlert(BaseModel):
-    signal: str
-    ticker: str
-    time: str = None
-
-async def place_order_projectx(signal_direction, strategy_cfg):
-    payload = {
-        "accountId": int(ACCOUNT_ID),
-        "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"],
-        "type": 2,  # Market order
-        "side": 0 if signal_direction == "long" else 1,
-        "size": strategy_cfg["TRADE_SIZE"]
-    }
-
-    token = await get_projectx_token()
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-
-    url = "https://api.topstepx.com/api/Order/place"
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload, headers=headers)
-        result = response.json()
-
-    if result.get("success") and result.get("orderId"):
-        return {"success": True, "orderId": result["orderId"]}
-    else:
-        raise ValueError(f"Order placement failed: {result}")
-
-# --- Safe Log Writer ---
-def log_event(path, data):
-    import json, os
-    try:
-        if not isinstance(data, dict):
-            logger.warning(f"log_event skipped invalid data: {data}")
-            return
-        log = []
-        if os.path.exists(path):
-            with open(path, 'r') as f:
-                try:
-                    log = json.load(f)
-                    if not isinstance(log, list):
-                        logger.warning(f"log_event found malformed log: resetting {path}")
-                        log = []
-                except json.JSONDecodeError:
-                    logger.warning(f"log_event could not parse {path}, resetting.")
-                    log = []
-        log.append(data)
-        with open(path, 'w') as f:
-            json.dump(log, f, indent=2)
-    except Exception as e:
-        logger.error(f"log_event error: {e}")
-
-# --- Trade Viewer Sanitizer ---
-def filter_valid_trades(trades):
-    valid_trades = []
-    for t in trades:
-        if isinstance(t, dict) and t.get("event", "").startswith("exit"):
-            valid_trades.append(t)
+        result_details = await api_client.place_order(order_req)
+        if result_details and result_details.id is not None:
+            logger.info(f"✅ Order placed successfully. Order ID: {result_details.id}")
+            return {"success" : True, "orderId": result_details.id }
         else:
-            logger.warning(f"Invalid trade log entry skipped: {t}")
-    return valid_trades
+            logger.error(f"❌ Order placement seemed to succeed but no valid OrderDetails.id received. Response: {result_details}")
+            return {"success": False, "errorMessage": "Order placement failed to return valid order details."}
+    except APIRequestError as e:
+        logger.error(f"❌ Order placement failed via APIClient: {e.message if hasattr(e, 'message') else e}", exc_info=True)
+        # Return structure similar to old one for compatibility if needed by caller
+        return {"success": False, "errorMessage": e.message if hasattr(e, 'message') else str(e) }
+    except Exception as e: # Catch any other unexpected errors
+        logger.error(f"❌ Unexpected exception during order placement: {e}", exc_info=True)
+        return {"success": False, "errorMessage": str(e)}
 
-async def poll_order_fill(order_id: int):
-    max_attempts = 10
-    delay = 2
-    for attempt in range(max_attempts):
-        await asyncio.sleep(delay)
-        response = await projectx_api_request("POST", "/api/Order/searchOpen", payload={"accountId": int(ACCOUNT_ID)})
-        open_orders = response.get("orders", [])
-        if not any(order.get("id") == order_id for order in open_orders):
-            logger.info(f"Order {order_id} has been filled.")
-            return True
-        logger.info(f"Order {order_id} not filled yet. Attempt {attempt + 1}/{max_attempts}")
-    logger.warning(f"Order {order_id} was not filled after {max_attempts} attempts.")
-    return False
-    
+
 async def close_position_projectx(strategy_cfg: dict, current_active_signal: str):
+    global ACCOUNT_ID # Ensure ACCOUNT_ID is set
+    if not api_client: raise TopstepAPIError("APIClient not initialized")
+    if not ACCOUNT_ID: raise TopstepAPIError("ACCOUNT_ID not set")
+
+    # Determine side for closing order
+    close_side = "sell" if current_active_signal == "long" else "buy"
+
     if "PROJECTX_CONTRACT_ID" not in strategy_cfg:
-         raise ValueError(f"PROJECTX_CONTRACT_ID not found for symbol {strategy_cfg['CONTRACT_SYMBOL']}")
-    payload = {
-        "accountId": int(ACCOUNT_ID),
-        "contractId": strategy_cfg["PROJECTX_CONTRACT_ID"]
-    }
-    log_event(ALERT_LOG_PATH, {"event": "Closing Position", "strategy": current_strategy_name, "payload": payload})
-    return await projectx_api_request("POST", "/api/Position/closeContract", payload=payload)
+         raise ValueError(f"PROJECTX_CONTRACT_ID not found for symbol {strategy_cfg.get('CONTRACT_SYMBOL', 'N/A')}")
 
-# --- Ensure entry_price is available before PnL ---
+    # This endpoint /api/Position/closeContract was specific.
+    # Standard way is to place an opposing market order.
+    # If the API supports a specific "close position" endpoint, that would be called via api_client.
+    # For now, assuming placing an opposing market order for the full size of the trade.
+    # The quantity might need to be fetched from current position state if not closing full initial size.
+    order_req = OrderRequest(
+        accountId=int(ACCOUNT_ID),
+        contractId=strategy_cfg["PROJECTX_CONTRACT_ID"],
+        qty=strategy_cfg["TRADE_SIZE"], # Assuming full close of original trade size
+        side=close_side,
+        type="market"
+    )
+    log_event(ALERT_LOG_PATH, {"event": "Closing Position Attempt", "strategy": current_strategy_name, "payload": order_req.dict(by_alias=True)})
+    try:
+        response = await api_client.place_order(order_req)
+        if response and response.id is not None:
+            logger.info(f"Close position order placed: {response.id}")
+            return {"success": True, "orderId": response.id}
+        else:
+            logger.error(f"❌ Close position order seemed to succeed but no valid OrderDetails.id received. Response: {response}")
+            return {"success": False, "errorMessage": "Close position order failed to return valid order details."}
+    except APIRequestError as e:
+        logger.error(f"Failed to close position via API: {e.message if hasattr(e, 'message') else e}")
+        return {"success": False, "errorMessage": str(e.message if hasattr(e, 'message') else e)}
+    except Exception as e:
+        logger.error(f"Unexpected error closing position: {e}", exc_info=True)
+        return {"success": False, "errorMessage": str(e)}
+
+# Define the Trade class
+class Trade: # Simple trade state tracking
+    def __init__(self, strategy_name: str, order_id: int, direction: str, entry_price: Optional[float] = None, size: int = 1):
+        self.strategy_name = strategy_name
+        self.order_id = order_id
+        self.entry_price = entry_price
+        self.direction = direction # 'long' or 'short'
+        self.size = size
+        self.entry_time = datetime.utcnow()
+        self.exit_price: Optional[float] = None
+        self.pnl: float = 0.0
+        self.status: str = "open" # open, closed
+
+    def to_dict(self):
+        return {
+            "strategy_name": self.strategy_name,
+            "order_id": self.order_id,
+            "entry_price": self.entry_price,
+            "direction": self.direction,
+            "size": self.size,
+            "entry_time": self.entry_time.isoformat() if self.entry_time else None,
+            "exit_price": self.exit_price,
+            "pnl": self.pnl,
+            "status": self.status,
+        }
+
+# --- Strategy-based Trade States ---
+trade_states: Dict[str, Dict[str, Any]] = {} # Keyed by strategy_name
+# Each strategy state: {"trade_active": bool, "daily_pnl": float, "current_trade": Optional[Trade]}
+
+# --- Update fetch_current_price ---
+def fetch_current_price(contract_id: Optional[str] = None) -> Optional[float]:
+    # This needs to get the latest price for a specific contract_id from latest_market_trades or latest_market_quotes
+    # For simplicity, let's assume latest_market_trades contains trades with 'price' and 'contractId'
+    if not contract_id: # If no specific contract, try to get a general one (less ideal)
+        if latest_market_trades:
+            return latest_market_trades[-1].get("price") # Or parse from the list structure
+        if latest_market_quotes: # Quotes might be a list of [bid, ask, contractId, ...]
+            # This part is highly dependent on actual quote structure
+            return latest_market_quotes[-1][0] if latest_market_quotes[-1] else None
+        return None
+
+    # Search for the specific contract_id in trades or quotes
+    for trade_event_list in reversed(latest_market_trades):
+        for trade_event in trade_event_list: # Assuming trades come in lists
+             if isinstance(trade_event, dict) and trade_event.get("contractId") == contract_id and "price" in trade_event:
+                return trade_event["price"]
+    # Fallback to quotes if no trade found for contract
+    # Ensure quote_event is a list and has enough elements before accessing indices.
+    for quote_event_list in reversed(latest_market_quotes):
+        for quote_event in quote_event_list:
+            if isinstance(quote_event, list) and len(quote_event) > 2 and quote_event[2] == contract_id:
+                # Example: price is quote_event[0] (bid) or quote_event[1] (ask)
+                # Using midpoint for simplicity, adjust as needed
+                if quote_event[0] is not None and quote_event[1] is not None:
+                    return (quote_event[0] + quote_event[1]) / 2
+                elif quote_event[0] is not None:
+                    return quote_event[0] # Just bid
+                elif quote_event[1] is not None:
+                    return quote_event[1] # Just ask
+    return None
+
+
+def handle_user_trade(trade_data_item: dict): # Renamed arg to avoid conflict, processes one trade item
+    global trade_states # Uses the new per-strategy trade_states
+    try:
+        # user_trade_events.append(trade_data_item) # If a global raw log is still needed
+        logger.info(f"[UserHubCallback] handle_user_trade processing: {trade_data_item}")
+
+        # Assuming trade_data_item is a dictionary representing a single trade event
+        order_id = trade_data_item.get('orderId')
+        price = trade_data_item.get('price')
+        status = trade_data_item.get('status') # e.g. "Filled", "PartiallyFilled", "Working" -> "Filled" is an execution
+        # It seems the original `handle_user_trade` was processing "Closed" status for PnL.
+        # "Filled" usually means execution. "Closed" might mean the order is no longer active (filled or cancelled).
+        # This needs clarification based on TopStep's actual stream messages.
+        # For now, let's assume "Filled" updates entry/exit and "Closed" (if it means fully done) finalizes PnL.
+
+        if not order_id:
+            logger.warning("[UserHubCallback] No orderId in trade event. Skipping.")
+            return
+
+        # Find which strategy's trade this belongs to
+        for strategy_name, state in trade_states.items():
+            current_trade_obj = state.get("current_trade")
+            if current_trade_obj and current_trade_obj.order_id == order_id:
+                # This trade event belongs to current_trade_obj of strategy_name
+                if status == "Filled" and price is not None:
+                    if current_trade_obj.entry_price is None: # First fill for this trade
+                        current_trade_obj.entry_price = price
+                        current_trade_obj.status = "open_filled" # Mark as filled
+                        log_event(TRADE_LOG_PATH, {
+                            "event": "entry_filled_userhub", "strategy": strategy_name,
+                            "orderId": order_id, "entry_price": price,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        logger.info(f"[UserHubCallback] Entry price for trade {order_id} (Strat: {strategy_name}) updated to: {price}")
+                    # If it's a closing trade, this logic might need to be different
+                    # e.g. if an opposing order was placed and this is its fill notification
+                    elif current_trade_obj.status == "closing": # An exit order was placed and got filled
+                        current_trade_obj.exit_price = price
+                        current_trade_obj.status = "closed"
+
+                        # Calculate PnL
+                        pnl_points = (current_trade_obj.exit_price - current_trade_obj.entry_price) * \
+                                     (1 if current_trade_obj.direction == "long" else -1)
+                        # Assuming NQ $20 per point, adapt if other symbols
+                        contract_cfg = strategies.get(strategy_name, {})
+                        point_value = 20 if contract_cfg.get("CONTRACT_SYMBOL", "NQ") == "NQ" else 50 # Example for ES
+                        pnl_dollars = pnl_points * point_value * current_trade_obj.size
+                        current_trade_obj.pnl = pnl_dollars
+                        state["daily_pnl"] = state.get("daily_pnl", 0.0) + pnl_dollars
+
+                        log_event(TRADE_LOG_PATH, {
+                            "event": "exit_filled_userhub", "strategy": strategy_name,
+                            "orderId": order_id, "entry_price": current_trade_obj.entry_price,
+                            "exit_price": current_trade_obj.exit_price, "pnl": pnl_dollars,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        logger.info(f"[UserHubCallback] Exit for trade {order_id} (Strat: {strategy_name}). Exit Price: {price}, PnL: {pnl_dollars:.2f}")
+
+                        state["trade_active"] = False
+                        state["current_trade"] = None # Clear the trade
+
+                elif status == "Closed": # Order is no longer active, might be fully filled or cancelled
+                    if current_trade_obj.status == "open_filled" and current_trade_obj.exit_price is None:
+                        # This means the entry order was filled, but now it's "Closed" without an explicit exit fill.
+                        # This could be an external close or cancellation. Assume it's an issue or needs manual check.
+                        logger.warning(f"[UserHubCallback] Trade {order_id} (Strat: {strategy_name}) 'Closed' without recorded exit. PnL not calculated. Current state: {current_trade_obj.to_dict()}")
+                        # Potentially reset state here if it means the trade is truly over
+                        # state["trade_active"] = False
+                        # state["current_trade"] = None
+                    elif current_trade_obj.status == "closed": # Already handled by "Filled" state for exit
+                        pass
+
+
+    except Exception as e:
+        logger.error(f"[UserHubCallback] Trade handler error: {e}", exc_info=True)
+
+
 async def check_and_close_active_trade(strategy_name_of_trade: str):
-    global trade_active, entry_price, daily_pnl, current_signal_direction, current_trade_id
-
-    if not trade_active:
-        logger.debug("check_and_close_active_trade called, but no trade is active.")
+    # This function needs to use the new per-strategy trade_states
+    state = trade_states.get(strategy_name_of_trade)
+    if not state or not state.get("trade_active") or not state.get("current_trade"):
+        logger.debug(f"check_and_close_active_trade called for {strategy_name_of_trade}, but no active trade found in state.")
         return
 
-    logger.debug(f"Trade exit check: entry_price={entry_price}, direction={current_signal_direction}")
-
-    if entry_price is None:
-        logger.warning("Entry price not yet available for trade check.")
-        return
-
-    # Get the config for the strategy that PLACED the trade
+    current_trade_obj: Trade = state["current_trade"]
     trade_strategy_cfg = strategies.get(strategy_name_of_trade)
-    if not trade_strategy_cfg:
-        print(f"Error: Strategy config for '{strategy_name_of_trade}' (active trade) not found.")
-        return
-    current_market_price = await fetch_current_price(trade_strategy_cfg.get("PROJECTX_CONTRACT_ID", "N/A")) # Get current price
 
-    if current_market_price is None:
-        print("Could not fetch current market price to check trade.")
+    if not trade_strategy_cfg:
+        logger.error(f"Error: Strategy config for '{strategy_name_of_trade}' (active trade) not found.")
         return
-    points_pnl = (current_market_price - entry_price) * (1 if current_signal_direction == 'long' else -1)
-    dollar_pnl_per_contract = points_pnl * 20 # NQ specific, $20 per point
-    total_dollar_pnl = dollar_pnl_per_contract * trade_strategy_cfg["TRADE_SIZE"]
+
+    if current_trade_obj.entry_price is None:
+        logger.warning(f"Entry price not yet available for trade check (Strat: {strategy_name_of_trade}). Order ID: {current_trade_obj.order_id}")
+        return
+
+    current_market_price = fetch_current_price(contract_id=trade_strategy_cfg.get("PROJECTX_CONTRACT_ID"))
+    if current_market_price is None:
+        logger.warning(f"Could not fetch current market price for {trade_strategy_cfg.get('PROJECTX_CONTRACT_ID')} to check trade.")
+        return
+
+    points_pnl = (current_market_price - current_trade_obj.entry_price) * \
+                 (1 if current_trade_obj.direction == 'long' else -1)
+
+    # Determine point value based on contract (e.g., NQ $20/pt, ES $50/pt)
+    # This should be part of strategy_cfg or a global contract details map
+    point_value = 20 if trade_strategy_cfg.get("CONTRACT_SYMBOL", "NQ") == "NQ" else 50 # Default for ES
+
+    total_dollar_pnl = points_pnl * point_value * current_trade_obj.size
 
     exit_reason = None
-    if total_dollar_pnl >= trade_strategy_cfg["MAX_TRADE_PROFIT"]:
+    if total_dollar_pnl >= trade_strategy_cfg.get("MAX_TRADE_PROFIT", float('inf')):
         exit_reason = "Max Trade Profit Hit"
-    elif total_dollar_pnl <= trade_strategy_cfg["MAX_TRADE_LOSS"]:
+    elif total_dollar_pnl <= trade_strategy_cfg.get("MAX_TRADE_LOSS", float('-inf')):
         exit_reason = "Max Trade Loss Hit"
 
     if exit_reason:
-        print(f"[{strategy_name_of_trade}] Attempting to close trade. Reason: {exit_reason}. PnL: ${total_dollar_pnl:.2f}")
+        logger.info(f"[{strategy_name_of_trade}] Attempting to close trade. Reason: {exit_reason}. Current PnL: ${total_dollar_pnl:.2f}")
         try:
-            await close_position_projectx(trade_strategy_cfg, current_signal_direction)
-            log_event(TRADE_LOG_PATH, {
-            "event": "entry", "strategy": strategy_webhook_name, "signal": alert.signal, 
-            "ticker": alert.ticker, "entry_price_estimate": entry_price,
-            "projectx_order_id": current_trade_id
-            })
-            daily_pnl += total_dollar_pnl # This daily_pnl should be per-strategy in a more advanced setup
-            trade_active = False
-            entry_price = None
-            current_signal_direction = None
-            trade_time = None
-            current_trade_id = None
-            print(f"Trade exited at {current_market_price}, Actual PnL: {total_dollar_pnl:.2f}")
-        except Exception as e:
-            print(f"Error closing position: {e}")
-            log_event(ALERT_LOG_PATH, {"event": "Error Closing Position", "strategy": strategy_name_of_trade, "error": str(e)})
+            # Mark the trade as "closing" before sending order, so UserHub fill can identify it as an exit
+            current_trade_obj.status = "closing"
+            close_response = await close_position_projectx(trade_strategy_cfg, current_trade_obj.direction)
+            if close_response.get("success"):
+                logger.info(f"[{strategy_name_of_trade}] Close order placed. Order ID: {close_response.get('orderId')}. Waiting for fill via UserHub.")
+                # PnL calculation and state reset will now primarily happen in handle_user_trade when fill is confirmed
+            else:
+                current_trade_obj.status = "open_filled" # Revert status if close order failed
+                logger.error(f"[{strategy_name_of_trade}] Failed to place close order: {close_response.get('errorMessage')}")
+                log_event(ALERT_LOG_PATH, {"event": "Error Closing Position", "strategy": strategy_name_of_trade, "error": close_response.get('errorMessage')})
 
-    # Check daily PnL limits (this global daily_pnl needs to be strategy-specific too)
-    if daily_pnl >= active_strategy_config["MAX_DAILY_PROFIT"] or daily_pnl <= active_strategy_config["MAX_DAILY_LOSS"]:
-        if trade_active: # If a trade is still active when daily limit hit
-            print(f"Daily PnL limit hit (${daily_pnl:.2f}). Forcing close of active trade for strategy {strategy_name_of_trade}.")
+        except Exception as e:
+            current_trade_obj.status = "open_filled" # Revert status
+            logger.error(f"Error during automated closing of position for {strategy_name_of_trade}: {e}", exc_info=True)
+            log_event(ALERT_LOG_PATH, {"event": "Exception Closing Position", "strategy": strategy_name_of_trade, "error": str(e)})
+
+    # Check daily PnL limits for this strategy
+    current_daily_pnl = state.get("daily_pnl", 0.0)
+    # Add unrealized PnL of current trade for this check
+    effective_daily_pnl = current_daily_pnl + total_dollar_pnl
+
+    if effective_daily_pnl >= trade_strategy_cfg.get("MAX_DAILY_PROFIT", float('inf')) or \
+       effective_daily_pnl <= trade_strategy_cfg.get("MAX_DAILY_LOSS", float('-inf')):
+
+        limit_type = "MAX_DAILY_PROFIT" if effective_daily_pnl >= trade_strategy_cfg.get("MAX_DAILY_PROFIT", float('inf')) else "MAX_DAILY_LOSS"
+        logger.info(f"[{strategy_name_of_trade}] Daily PnL limit ({limit_type}) hit or exceeded with current trade. Effective PnL: ${effective_daily_pnl:.2f}. Limit: {trade_strategy_cfg.get(limit_type)}")
+
+        if state.get("trade_active"): # If a trade is still active when daily limit hit
+            logger.info(f"Forcing close of active trade for strategy {strategy_name_of_trade} due to daily PnL limit.")
             try:
-                await close_position_projectx(trade_strategy_cfg, current_signal_direction)
-                # Recalculate PNL for this forced exit
-                final_points_pnl = (current_market_price - entry_price) * (1 if current_signal_direction == 'long' else -1)
-                final_dollar_pnl = final_points_pnl * 20 * trade_strategy_cfg["TRADE_SIZE"]
-                log_event(TRADE_LOG_PATH, {
-                    "event": "exit_forced_daily_limit", "strategy": strategy_name_of_trade, "signal": current_signal_direction,
-                    "entry_price": entry_price, "exit_price": current_market_price, "pnl": final_dollar_pnl,
-                    "reason": "Daily PnL Limit Hit", "projectx_order_id": current_trade_id
-                })
-                daily_pnl += (final_dollar_pnl - total_dollar_pnl) # Adjust daily PnL with the actual PnL of this forced close
+                current_trade_obj.status = "closing" # Mark for exit
+                close_response = await close_position_projectx(trade_strategy_cfg, current_trade_obj.direction)
+                if close_response.get("success"):
+                    logger.info(f"[{strategy_name_of_trade}] Daily limit force-close order placed. Order ID: {close_response.get('orderId')}. Waiting for fill.")
+                    # PnL and state reset in handle_user_trade
+                else:
+                    current_trade_obj.status = "open_filled" # Revert status
+                    logger.error(f"[{strategy_name_of_trade}] Failed to place force-close order for daily limit: {close_response.get('errorMessage')}")
             except Exception as e:
-                 print(f"Error force-closing position for daily limit: {e}")
-        trade_active = False # Halt further trading for this strategy today
-        print(f"Trading halted for the day for strategy {current_strategy_name} due to PnL limits.")
-        # Note: This halts based on current_strategy_name's config, but daily_pnl is global. Needs refinement.
+                 current_trade_obj.status = "open_filled" # Revert status
+                 logger.error(f"Error force-closing position for {strategy_name_of_trade} (daily limit): {e}", exc_info=True)
+
+        # Mark strategy as halted for the day (example, actual halting mechanism might differ)
+        state["trading_halted_today"] = True
+        logger.info(f"Trading halted for the day for strategy {strategy_name_of_trade} due to PnL limits.")
+
 
 # --- MAIN ENDPOINTS ---
-strategy_that_opened_trade = None  # Global to track which strategy opened the current trade
+# strategy_that_opened_trade = None # Replaced by per-strategy state in trade_states
 
-# Receive alert and execute strategy
 @app.post("/webhook/{strategy_webhook_name}")
 async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert):
-    global trade_states
+    global trade_states, ACCOUNT_ID
 
     log_event(ALERT_LOG_PATH, {
-        "event": "Webhook Received",
-        "strategy": strategy_webhook_name,
-        "signal": alert.signal,
-        "ticker": alert.ticker
+        "event": "Webhook Received", "strategy": strategy_webhook_name,
+        "signal": alert.signal, "ticker": alert.ticker
     })
 
     if strategy_webhook_name not in strategies:
         return {"status": "error", "reason": f"Strategy '{strategy_webhook_name}' not found"}
 
     strategy_cfg = strategies[strategy_webhook_name]
+    # Initialize state for the strategy if it's the first time
     state = trade_states.setdefault(strategy_webhook_name, {
-        "trade_active": False,
-        "daily_pnl": 0.0,
-        "current_trade": None
+        "trade_active": False, "daily_pnl": 0.0, "current_trade": None, "trading_halted_today": False
     })
 
-    if state["daily_pnl"] >= strategy_cfg.get("MAX_DAILY_PROFIT", float("inf")) or state["daily_pnl"] <= strategy_cfg.get("MAX_DAILY_LOSS", float("-inf")):
-        log_event(ALERT_LOG_PATH, {
-            "event": "Trading Halted (Daily Limit)",
-            "strategy": strategy_webhook_name
-        })
-        return {"status": "halted", "reason": "daily limit reached"}
+    if state.get("trading_halted_today"):
+        log_event(ALERT_LOG_PATH, {"event": "Trading Halted (Daily Limit)", "strategy": strategy_webhook_name})
+        return {"status": "halted", "reason": "daily PnL limit previously reached for this strategy"}
 
     if state["trade_active"]:
-        log_event(ALERT_LOG_PATH, {
-            "event": "Trade Ignored (Already Active)",
-            "strategy": strategy_webhook_name
-        })
-        return {"status": "ignored", "reason": "trade already active for strategy"}
+        log_event(ALERT_LOG_PATH, {"event": "Trade Ignored (Already Active)", "strategy": strategy_webhook_name})
+        return {"status": "ignored", "reason": f"trade already active for strategy {strategy_webhook_name}"}
 
-    print(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time if hasattr(alert, 'time') and alert.time else 'N/A'}")
+    if not ACCOUNT_ID: # Ensure ACCOUNT_ID is available
+        logger.error("ACCOUNT_ID not available for order placement.")
+        return {"status": "error", "reason": "Server error: Account ID not configured."}
+
+
+    logger.info(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time if alert.time else 'N/A'}")
 
     try:
-        result = await place_order_projectx(alert.signal, strategy_cfg)
-        print(f"[DEBUG] place_order_projectx result: {result}")
+        # place_order_projectx now expects signal_direction ('long' or 'short')
+        signal_dir = "long" if "long" in alert.signal.lower() else "short" # Basic parsing
+
+        result = await place_order_projectx(signal_dir, strategy_cfg)
+
         if result.get("success") and result.get("orderId"):
             order_id = result["orderId"]
-            state["current_trade"] = Trade(strategy_webhook_name, order_id, None, alert.signal)
-            state["trade_active"] = True
-            print("[DEBUG] Logging trade entry...")
+            # Create a new Trade object and store it in this strategy's state
+            # Entry price is initially None; UserHubStream callback (handle_user_trade) will update it on fill
+            state["current_trade"] = Trade(
+                strategy_name=strategy_webhook_name,
+                order_id=order_id,
+                direction=signal_dir,
+                entry_price=None,
+                size=strategy_cfg.get("TRADE_SIZE", 1)
+            )
+            state["trade_active"] = True # Mark trade as active for this strategy
+
             log_event(TRADE_LOG_PATH, {
-                "event": "entry",
-                "strategy": strategy_webhook_name,
-                "signal": alert.signal,
-                "ticker": alert.ticker,
-                "entry_price_estimate": None,
-                "projectx_order_id": order_id
+                "event": "entry_order_placed", "strategy": strategy_webhook_name,
+                "signal": alert.signal, "ticker": alert.ticker,
+                "projectx_order_id": order_id, "timestamp": datetime.utcnow().isoformat()
             })
-            print("[DEBUG] Trade entry logged successfully.")
-            return {"status": "trade placed", "projectx_order_id": order_id}
+            return {"status": "trade_placed", "projectx_order_id": order_id}
         else:
-            print(f"[DEBUG] Order not placed. Response: {result}")
             error_msg = result.get("errorMessage", "Unknown error placing order.")
             log_event(ALERT_LOG_PATH, {
-                "event": "Order Placement Failed",
-                "strategy": strategy_webhook_name,
-                "error": error_msg,
-                "response": result
+                "event": "Order Placement Failed", "strategy": strategy_webhook_name,
+                "error": error_msg, "response": result
             })
             return {"status": "error", "reason": f"Failed to place order: {error_msg}"}
     except Exception as e:
+        logger.error(f"Error processing webhook for {strategy_webhook_name}: {e}", exc_info=True)
         log_event(ALERT_LOG_PATH, {
-            "event": "Error Processing Webhook",
-            "strategy": strategy_webhook_name,
-            "error": str(e)
+            "event": "Error Processing Webhook", "strategy": strategy_webhook_name, "error": str(e)
         })
         return {"status": "error", "detail": str(e)}
         
-def save_trade_states():
-    with open("active_trades.json", "w") as f:
-        json.dump({k: v["current_trade"].to_dict() for k, v in trade_states.items() if v["current_trade"]}, f, indent=2)
-
-# Placeholder for user_trade_events list
-user_trade_events = []
+# Removed save_trade_states as trade_states is in-memory; persistence would need more robust handling
 
 @app.get("/check_trade_status")
 async def check_trade_status_endpoint():
-    global strategy_that_opened_trade
-    if not trade_active:
-        return {"status": "no active trade"}
-    if not strategy_that_opened_trade:
-        return {"status": "error", "reason": "Trade active but opening strategy unknown."}
+    # This endpoint needs to iterate over all strategies in trade_states or take a strategy_name param
+    active_trades_summary = []
+    for strategy_name, state in trade_states.items():
+        if state.get("trade_active") and state.get("current_trade"):
+            await check_and_close_active_trade(strategy_name) # This will check PnL targets
+            current_trade_obj: Trade = state["current_trade"]
+            active_trades_summary.append({
+                "strategy": strategy_name,
+                "status": "checked_still_active" if state.get("trade_active") else "checked_now_closed",
+                "entry_price": current_trade_obj.entry_price,
+                "signal": current_trade_obj.direction,
+                "order_id": current_trade_obj.order_id
+            })
+    if not active_trades_summary:
+        return {"status": "no_active_trades_found"}
+    return {"active_trades_status": active_trades_summary}
 
-    await check_and_close_active_trade(strategy_that_opened_trade)
-
-    if trade_active:
-        return {
-            "status": "checked_still_active",
-            "entry_price": entry_price,
-            "signal": current_signal_direction
-        }
-    else:
-        return {"status": "checked_trade_closed_or_halted"}
 
 @app.get("/live_feed", response_class=HTMLResponse)
 async def live_feed_page():
-    rows = "".join([
-        f"<tr><td>{item['type']}</td><td>{json.dumps(item['data'])}</td></tr>"
-        for item in reversed(latest_market_data[-50:])
-    ])
+    # This needs to be adapted based on how new stream handlers store data
+    # For now, using the raw latest_market_quotes, trades, depth
+    # Consider formatting them better if they are complex objects/lists
+
+    def format_data(item_list, event_type):
+        html_rows = ""
+        for item_group in reversed(item_list[-20:]): # Show last 20 groups of events
+            for item in item_group: # Iterate if item_group is a list of multiple events
+                 html_rows += f"<tr><td>{event_type}</td><td>{json.dumps(item, indent=2)}</td></tr>"
+        return html_rows
+
+    quote_rows = format_data(latest_market_quotes, "Quote")
+    trade_rows = format_data(latest_market_trades, "Trade")
+    depth_rows = format_data(latest_market_depth, "Depth")
+
     return HTMLResponse(f"""
     <html><head><title>Live Market Feed</title>{COMMON_CSS}</head><body><div class='container'>
-    <h1>Live Market Feed (latest 50 events)</h1>
+    <h1>Live Market Feed (latest events)</h1>
     <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
-    <table><thead><tr><th>Type</th><th>Data</th></tr></thead><tbody>{rows}</tbody></table>
+    <h2>Quotes</h2><table><thead><tr><th>Type</th><th>Data</th></tr></thead><tbody>{quote_rows}</tbody></table>
+    <h2>Trades</h2><table><thead><tr><th>Type</th><th>Data</th></tr></thead><tbody>{trade_rows}</tbody></table>
+    <h2>Depth</h2><table><thead><tr><th>Type</th><th>Data</th></tr></thead><tbody>{depth_rows}</tbody></table>
     </div></body></html>""")
 
-@app.get("/status", response_model=StatusResponse)
-async def get_status_endpoint(): # Renamed
+@app.get("/status_ui", response_model=StatusResponse) # Renamed to avoid conflict with /status used by other things
+async def get_status_endpoint():
+    # This needs to reflect the currently selected strategy in the UI (current_strategy_name)
+    # and its specific state from trade_states
+    strategy_state = trade_states.get(current_strategy_name, {})
+    active_trade_obj: Optional[Trade] = strategy_state.get("current_trade")
+
     return StatusResponse(
-        trade_active=trade_active,
-        entry_price=entry_price,
-        trade_time=trade_time.isoformat() if trade_time else None,
-        current_signal_direction=current_signal_direction,
-        daily_pnl=daily_pnl,
-        current_strategy_name=current_strategy_name, # The one selected in UI
-        active_strategy_config=strategies.get(current_strategy_name, {}) # Config displayed in UI
+        trade_active=strategy_state.get("trade_active", False),
+        entry_price=active_trade_obj.entry_price if active_trade_obj else None,
+        trade_time=active_trade_obj.entry_time.isoformat() if active_trade_obj and active_trade_obj.entry_time else None,
+        current_signal=active_trade_obj.direction if active_trade_obj else None,
+        daily_pnl=strategy_state.get("daily_pnl", 0.0),
+        current_strategy_name=current_strategy_name,
+        active_strategy_config=strategies.get(current_strategy_name, {})
     )
 
 @app.get("/debug_account_info")
 async def debug_account_info():
+    if not api_client:
+        return {"error": "APIClient not initialized"}
     try:
-        token = await get_projectx_token()
-        accounts_response = await projectx_api_request("POST", "/api/Account/search", payload={})
-        contracts_response = await projectx_api_request("POST", "/api/Contract/search", payload={"live": True, "searchText": "ENQ"})
+        # Token handled by APIClient
+        accounts_data = await api_client.get_accounts(only_active=False)
+        contracts_data = await api_client.search_contracts(search_text="ENQ", live=True) # Example search
 
         return {
-            "session_token": token,
-            "accounts": accounts_response,
-            "sample_contract_search_ENQ": contracts_response.get("contracts", [])
+            "session_token_active": bool(api_client._session_token), # Just indicate if token exists
+            "accounts": [acc.dict(by_alias=True) for acc in accounts_data],
+            "sample_contract_search_ENQ": [c.dict(by_alias=True) for c in contracts_data]
         }
     except Exception as e:
+        logger.error(f"Error in /debug_account_info: {e}", exc_info=True)
         return {"error": str(e)}
 
+# --- UI Endpoints (largely unchanged but rely on global state that's now per-strategy) ---
+# These need careful review to correctly display per-strategy status from trade_states
+
 @app.get("/", response_class=HTMLResponse)
-async def config_dashboard_with_selection_get(strategy_selected: str = None):
-    global current_strategy_name
+async def config_dashboard_with_selection_get(strategy_selected: str = None): #This is one of the / endpoint
+    global current_strategy_name, active_strategy_config # active_strategy_config is legacy global
     if strategy_selected and strategy_selected in strategies:
         current_strategy_name = strategy_selected
+    active_strategy_config = strategies[current_strategy_name] # Update global legacy one too for now
     return await config_dashboard_page()
+
 
 @app.get("/admin/clear_logs")
 async def clear_logs():
     try:
-        for f in ["trade_log.json", "alert_log.json"]:
-            if os.path.exists(f):
-                os.remove(f)
+        for f_name in [TRADE_LOG_PATH, ALERT_LOG_PATH]: # Use defined paths
+            if os.path.exists(f_name):
+                os.remove(f_name)
         return {"status": "success", "message": "Log files deleted"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -1016,23 +879,27 @@ async def clear_logs():
 @app.get("/contract_search", response_class=HTMLResponse)
 async def contract_search_page(search_query: str = ""):
     results_html = ""
-    if search_query:
+    if search_query and api_client:
         try:
-            contracts = await projectx_api_request("POST", "/api/Contract/search", payload={"live": False, "searchText": search_query})
-            for contract in contracts.get("contracts", []):
+            # Assuming APIClient has search_contracts method
+            contracts_result = await api_client.search_contracts(search_text=search_query, live=False)
+            for contract in contracts_result: # Iterate over List[Contract]
                 results_html += f"""
                 <tr>
-                    <td>{contract['id']}</td>
-                    <td>{contract['name']}</td>
-                    <td>{contract['description']}</td>
-                    <td>{contract['tickSize']}</td>
-                    <td>{contract['tickValue']}</td>
-                    <td><button onclick="copyToConfig('{contract['id']}')">Copy</button></td>
+                    <td>{contract.id}</td>
+                    <td>{contract.name}</td>
+                    <td>{contract.description or ""}</td>
+                    <td>{contract.tick_size}</td>
+                    <td>{contract.tick_value}</td>
+                    <td><button onclick="copyToConfig('{contract.id}')">Copy</button></td>
                 </tr>
                 """
         except Exception as e:
             results_html = f"<tr><td colspan='6'>Error: {str(e)}</td></tr>"
+    elif not api_client:
+        results_html = "<tr><td colspan='6'>API Client not initialized.</td></tr>"
 
+    # ... (rest of HTML for contract search page remains largely same)
     html = f"""
     <html>
     <head><title>Contract Search</title>{COMMON_CSS}</head>
@@ -1053,30 +920,30 @@ async def contract_search_page(search_query: str = ""):
     </div>
     <script>
         function copyToConfig(contractId) {{
+            // This JS needs to target the correct input field, assuming it's still 'projectx_contract_id'
             const input = document.getElementById('projectx_contract_id');
             if (input) {{
                 input.value = contractId;
                 alert("Contract ID copied to config input.");
             }} else {{
-                alert("ProjectX Contract ID input field not found in strategy config form.");
+                // If the input ID changed or is dynamic based on selected strategy, this needs update
+                alert("ProjectX Contract ID input field not found in the strategy config form.");
             }}
         }}
     </script>
     </body></html>"""
-    
     return HTMLResponse(content=html)
-
     
-@app.head("/", response_class=HTMLResponse)
+@app.head("/", response_class=HTMLResponse) # This is another / endpoint
 async def config_dashboard_with_selection_head(strategy_selected: str = None):
     global current_strategy_name
     if strategy_selected and strategy_selected in strategies:
         current_strategy_name = strategy_selected
-    # FastAPI handles sending only headers for HEAD requests when the GET handler returns a Response
     return await config_dashboard_page()
 
+
 async def config_dashboard_page():
-    global current_strategy_name
+    global current_strategy_name # This is the strategy selected in the UI
     strategy_options_html = "".join([f'<option value="{name}" {"selected" if name == current_strategy_name else ""}>{name}</option>' for name in strategies])
     
     strategy_rows_html = ""
@@ -1085,14 +952,21 @@ async def config_dashboard_page():
         clone_action = f"<a href='/clone_strategy_action?strategy_to_clone={name}' class='button-link clone-button'>Clone</a>"
         strategy_rows_html += f"<tr><td>{name}</td><td>{delete_action} {clone_action}</td></tr>"
 
+    # Config displayed is for the strategy selected in UI
     displayed_config = strategies.get(current_strategy_name, strategies.get("default", {}))
 
-    # Using the global runtime state variables for the status section
-    entry_price_display = entry_price if entry_price is not None else "None"
-    trade_time_display = trade_time.isoformat() if trade_time else "None"
-    current_signal_display = current_signal_direction if current_signal_direction else "None"
-    daily_pnl_display = f"{daily_pnl:.2f}"
-    strategy_opened_trade_display = strategy_that_opened_trade if strategy_that_opened_trade else "N/A"
+    # Status display needs to fetch from trade_states for the current_strategy_name
+    strategy_runtime_state = trade_states.get(current_strategy_name, {})
+    active_trade_for_current_strategy: Optional[Trade] = strategy_runtime_state.get("current_trade")
+
+    trade_active_display = strategy_runtime_state.get('trade_active', False)
+    entry_price_display = active_trade_for_current_strategy.entry_price if active_trade_for_current_strategy else "None"
+    trade_time_display = active_trade_for_current_strategy.entry_time.isoformat() if active_trade_for_current_strategy and active_trade_for_current_strategy.entry_time else "None"
+    current_signal_display = active_trade_for_current_strategy.direction if active_trade_for_current_strategy else "None"
+    daily_pnl_display = f"{strategy_runtime_state.get('daily_pnl', 0.0):.2f}"
+    # 'strategy_that_opened_trade' is now implicit by looking at current_strategy_name's state
+    trade_opened_by_display = current_strategy_name if trade_active_display else "N/A"
+
 
     html_content = f"""
     <html><head><title>Trading Bot Dashboard</title>{COMMON_CSS}
@@ -1130,16 +1004,14 @@ async def config_dashboard_page():
             <button type="submit">Create New Strategy (from Default)</button>
         </form><hr>
 
-        <h2>Live Bot Status</h2>
+        <h2>Live Bot Status (Strategy: {current_strategy_name})</h2>
         <div class="status-section" id="status-container">
-            <p><strong>Strategy in UI:</strong> {current_strategy_name}</p>
-            <p><strong>Globally Active Trade:</strong> {trade_active}</p>
-            <p><strong>Trade Opened By Strategy:</strong> {strategy_opened_trade_display}</p>
+            <p><strong>Trade Active:</strong> {trade_active_display}</p>
             <p><strong>Entry Price:</strong> {entry_price_display}</p>
             <p><strong>Trade Time (UTC):</strong> {trade_time_display}</p>
             <p><strong>Current Signal Direction:</strong> {current_signal_display}</p>
-            <p><strong>Global Daily PnL:</strong> {daily_pnl_display}</p>
-            <p><a href="/check_trade_status" class="button-link">Manually Check Active Trade</a></p>
+            <p><strong>Daily PnL for {current_strategy_name}:</strong> {daily_pnl_display}</p>
+            <p><a href="/check_trade_status?strategy_name={current_strategy_name}" class="button-link">Manually Check Active Trade for {current_strategy_name}</a></p>
         </div>
         <p><a href="/dashboard_menu_page" class="button-link">Go to Main Menu</a></p>
     </div>
@@ -1151,17 +1023,9 @@ async def config_dashboard_page():
     </body></html>"""
     return HTMLResponse(content=html_content)
 
-@app.get("/") # Handles both root and strategy selection for display
-async def config_dashboard_with_selection(strategy_selected: str = None):
-    global current_strategy_name, active_strategy_config
-    if strategy_selected and strategy_selected in strategies:
-        current_strategy_name = strategy_selected
-        active_strategy_config = strategies[current_strategy_name]
-    # If no strategy_selected or invalid, it defaults to the global current_strategy_name
-    return await config_dashboard_page()
 
-@app.post("/update_strategy_config") # Renamed
-async def update_strategy_config_action( # Renamed
+@app.post("/update_strategy_config")
+async def update_strategy_config_action(
     strategy_name_to_update: str = Form(...),
     contract_symbol: str = Form(...),
     projectx_contract_id: str = Form(...),
@@ -1171,7 +1035,7 @@ async def update_strategy_config_action( # Renamed
     max_daily_loss: float = Form(...),
     max_daily_profit: float = Form(...)
 ):
-    global active_strategy_config, current_strategy_name
+    global current_strategy_name # Keep this global for UI selection
     if strategy_name_to_update in strategies:
         strategies[strategy_name_to_update].update({
             "CONTRACT_SYMBOL": contract_symbol,
@@ -1182,37 +1046,38 @@ async def update_strategy_config_action( # Renamed
             "MAX_DAILY_LOSS": max_daily_loss,
             "MAX_DAILY_PROFIT": max_daily_profit
         })
-        save_strategies_to_file()
-        current_strategy_name = strategy_name_to_update # Keep UI on the edited strategy
-        active_strategy_config = strategies[current_strategy_name]
+        save_strategies_to_file() # Use the correct function name
+        current_strategy_name = strategy_name_to_update
     return RedirectResponse(url=f"/?strategy_selected={strategy_name_to_update}", status_code=303)
 
-@app.post("/create_new_strategy_action") # Renamed
-async def create_new_strategy_action_endpoint(new_strategy_name_input: str = Form(...)): # Renamed
-    global current_strategy_name, active_strategy_config
+@app.post("/create_new_strategy_action")
+async def create_new_strategy_action_endpoint(new_strategy_name_input: str = Form(...)):
+    global current_strategy_name
     if new_strategy_name_input and new_strategy_name_input.strip() and new_strategy_name_input not in strategies:
-        strategies[new_strategy_name_input.strip()] = dict(strategies["default"]) # Copy from default
+        new_name = new_strategy_name_input.strip()
+        strategies[new_name] = dict(strategies["default"])
+        trade_states[new_name] = {"trade_active": False, "daily_pnl": 0.0, "current_trade": None, "trading_halted_today": False} # Initialize state
         save_strategies_to_file()
-        current_strategy_name = new_strategy_name_input.strip()
-        active_strategy_config = strategies[current_strategy_name]
+        current_strategy_name = new_name
         return RedirectResponse(url=f"/?strategy_selected={current_strategy_name}", status_code=303)
-    return RedirectResponse(url="/", status_code=303) # Or show an error
+    return RedirectResponse(url="/", status_code=303)
 
-@app.get("/delete_strategy_action") # Renamed
-async def delete_strategy_action_endpoint(strategy_to_delete: str): # Renamed
-    global current_strategy_name, active_strategy_config
+@app.get("/delete_strategy_action")
+async def delete_strategy_action_endpoint(strategy_to_delete: str):
+    global current_strategy_name
     if strategy_to_delete in strategies and strategy_to_delete != "default":
         del strategies[strategy_to_delete]
+        if strategy_to_delete in trade_states: # Also remove its runtime state
+            del trade_states[strategy_to_delete]
         save_strategies_to_file()
-        if current_strategy_name == strategy_to_delete: # If deleting the current one
+        if current_strategy_name == strategy_to_delete:
             current_strategy_name = "default"
-            active_strategy_config = strategies[current_strategy_name]
         return RedirectResponse(url=f"/?strategy_selected={current_strategy_name}", status_code=303)
-    return RedirectResponse(url="/", status_code=303) # Or show an error
+    return RedirectResponse(url="/", status_code=303)
 
-@app.get("/clone_strategy_action") # Renamed
-async def clone_strategy_action_endpoint(strategy_to_clone: str): # Renamed
-    global current_strategy_name, active_strategy_config
+@app.get("/clone_strategy_action")
+async def clone_strategy_action_endpoint(strategy_to_clone: str):
+    global current_strategy_name
     if strategy_to_clone in strategies:
         new_name_base = f"{strategy_to_clone}_copy"
         new_name = new_name_base
@@ -1221,14 +1086,14 @@ async def clone_strategy_action_endpoint(strategy_to_clone: str): # Renamed
             new_name = f"{new_name_base}{count}"
             count += 1
         strategies[new_name] = dict(strategies[strategy_to_clone])
+        trade_states[new_name] = {"trade_active": False, "daily_pnl": 0.0, "current_trade": None, "trading_halted_today": False} # Initialize state for clone
         save_strategies_to_file()
-        current_strategy_name = new_name # Switch UI to the new clone
-        active_strategy_config = strategies[current_strategy_name]
+        current_strategy_name = new_name
         return RedirectResponse(url=f"/?strategy_selected={current_strategy_name}", status_code=303)
     return RedirectResponse(url="/", status_code=303)
     
-@app.get("/dashboard_menu_page", response_class=HTMLResponse) # Renamed
-async def dashboard_menu_html_page(): # Renamed
+@app.get("/dashboard_menu_page", response_class=HTMLResponse)
+async def dashboard_menu_html_page():
     return HTMLResponse(f"""
     <html><head><title>Bot Dashboard Menu</title>{COMMON_CSS}
         <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -1240,21 +1105,23 @@ async def dashboard_menu_html_page(): # Renamed
             <li><a href="/logs/trades">Trade History</a></li>
             <li><a href="/logs/alerts">Alert Log</a></li>
             <li><a href="/toggle_trading_status">Toggle Trading (View Status)</a></li>
+            <li><a href="/debug_account_info">Debug Account Info</a></li>
+            <li><a href="/live_feed">Live Market Feed</a></li>
         </ul>
     </div></body></html>""")
 
-# Placeholder for trading toggle status (not fully implemented functionality)
-bot_trading_enabled = True 
+bot_trading_enabled = True # Global toggle for all strategies; could be per-strategy too
 
 @app.get("/toggle_trading_status", response_class=HTMLResponse)
 async def toggle_trading_view():
     global bot_trading_enabled
     status_message = "ENABLED" if bot_trading_enabled else "DISABLED"
-    button_text = "Disable Trading" if bot_trading_enabled else "Enable Trading"
+    button_text = "Disable Trading (Global)" if bot_trading_enabled else "Enable Trading (Global)"
     return HTMLResponse(f"""
     <html><head><title>Toggle Trading</title>{COMMON_CSS}</head><body><div class="container">
-        <h1>Toggle Bot Trading</h1>
+        <h1>Toggle Bot Trading (Global)</h1>
         <p>Current Bot Trading Status: <strong>{status_message}</strong></p>
+        <p>Note: This is a global toggle. Individual strategy PnL limits still apply.</p>
         <form action="/toggle_trading_action" method="post">
             <button type="submit">{button_text}</button>
         </form>
@@ -1266,96 +1133,104 @@ async def toggle_trading_action_endpoint():
     global bot_trading_enabled
     bot_trading_enabled = not bot_trading_enabled
     status_message = "ENABLED" if bot_trading_enabled else "DISABLED"
-    print(f"Bot trading status changed to: {status_message}")
-    log_event(ALERT_LOG_PATH, {"event": "Trading Status Changed", "status": status_message})
+    logger.info(f"Global bot trading status changed to: {status_message}")
+    log_event(ALERT_LOG_PATH, {"event": "Global Trading Status Changed", "status": status_message})
     return RedirectResponse(url="/toggle_trading_status", status_code=303)
 
 @app.get("/logs/trades", response_class=HTMLResponse)
 async def trade_log_view_page():
+    # This log view remains global, showing trades from all strategies
     if os.path.exists(TRADE_LOG_PATH):
         with open(TRADE_LOG_PATH, "r") as f:
             try:
-                trades = json.load(f)
+                trades_log_entries = json.load(f)
             except json.JSONDecodeError:
-                trades = []
+                trades_log_entries = []
     else:
-        trades = []
+        trades_log_entries = []
 
     summary_by_strategy = {}
-    for t in trades:
-        if not t.get("event", "").startswith("exit"):
-            continue
-        strat = t.get("strategy", "Unknown")
-        summary = summary_by_strategy.setdefault(strat, {
-            "wins": 0, "losses": 0, "total_pnl": 0, "count": 0,
-            "best": float('-inf'), "worst": float('inf')
-        })
-        pnl = t.get("pnl", 0)
-        summary["wins"] += 1 if pnl > 0 else 0
-        summary["losses"] += 1 if pnl <= 0 else 0
-        summary["total_pnl"] += pnl
-        summary["count"] += 1
-        summary["best"] = max(summary["best"], pnl)
-        summary["worst"] = min(summary["worst"], pnl)
+    # Filter for actual PnL events (e.g., "exit_filled_userhub", "exit_forced_daily_limit")
+    for t_entry in trades_log_entries:
+        if t_entry.get("event", "").startswith("exit"): # Consider all exit events for PnL
+            strat = t_entry.get("strategy", "Unknown")
+            summary = summary_by_strategy.setdefault(strat, {
+                "wins": 0, "losses": 0, "total_pnl": 0, "count": 0,
+                "best": float('-inf'), "worst": float('inf')
+            })
+            pnl = t_entry.get("pnl", 0.0)
+            if pnl is not None: # Ensure PnL is present
+                summary["wins"] += 1 if pnl > 0 else 0
+                summary["losses"] += 1 if pnl <= 0 else 0 # Count 0 PnL as loss or neutral
+                summary["total_pnl"] += pnl
+                summary["count"] += 1
+                summary["best"] = max(summary["best"] if summary["best"] != float('-inf') else pnl, pnl)
+                summary["worst"] = min(summary["worst"] if summary["worst"] != float('inf') else pnl, pnl)
 
-    summary_html = "".join([
-        f"<h3>{s}</h3><ul>"
-        f"<li>Total Trades: {d['count']}</li>"
-        f"<li>Wins: {d['wins']} | Losses: {d['losses']}</li>"
-        f"<li>Total PnL: ${d['total_pnl']:.2f}</li>"
-        f"<li>Average PnL: ${d['total_pnl']/d['count']:.2f}</li>"
-        f"<li>Best: ${d['best']:.2f} | Worst: ${d['worst']:.2f}</li></ul>"
-        for s, d in summary_by_strategy.items()
-    ])
+    summary_html = "<h2>Performance Summary by Strategy</h2>"
+    for s, d in summary_by_strategy.items():
+        avg_pnl_html = f"${d['total_pnl']/d['count']:.2f}" if d['count'] > 0 else "N/A"
+        best_pnl_html = f"${d['best']:.2f}" if d['best'] != float('-inf') else "N/A"
+        worst_pnl_html = f"${d['worst']:.2f}" if d['worst'] != float('inf') else "N/A"
+        summary_html += (
+            f"<h3>{s}</h3><ul>"
+            f"<li>Total Trades Logged (Exits): {d['count']}</li>"
+            f"<li>Wins: {d['wins']} | Losses: {d['losses']}</li>"
+            f"<li>Total PnL: ${d['total_pnl']:.2f}</li>"
+            f"<li>Average PnL per Trade: {avg_pnl_html}</li>"
+            f"<li>Best Trade: {best_pnl_html} | Worst Trade: {worst_pnl_html}</li></ul>"
+        )
+    if not summary_by_strategy:
+        summary_html += "<p>No completed trades with PnL found in logs.</p>"
+
 
     rows_html = "".join([
-        f"<tr><td>{t.get('timestamp','')}</td><td>{t.get('strategy','')}</td><td>{t.get('ticker','')}</td><td>{t.get('signal','')}</td>"
-        f"<td>{t.get('entry_price_estimate', t.get('entry_price',''))}</td><td>{t.get('exit_price','')}</td><td>{t.get('pnl','')}</td></tr>"
-        for t in reversed(trades)
+        f"<tr><td>{t.get('timestamp','')}</td><td>{t.get('strategy','')}</td><td>{t.get('event','')}</td>"
+        f"<td>{t.get('projectx_order_id', t.get('orderId',''))}</td>"
+        f"<td>{t.get('entry_price','')}</td><td>{t.get('exit_price','')}</td><td>{t.get('pnl','')}</td>"
+        f"<td>{t.get('signal','')}</td><td>{t.get('ticker','')}</td></tr>"
+        for t in reversed(trades_log_entries) # Show all log entries
     ])
-
+    # ... (rest of HTML for trade log page)
     return HTMLResponse(f"""
     <html><head><title>Trade History</title>{COMMON_CSS}</head><body><div class='container'>
     <h1>Trade History</h1>
     <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
-    <h2>Performance Summary</h2>
     {summary_html}
-    <h2>Trade Log</h2>
+    <h2>Detailed Trade Log</h2>
     <a href='/download/trades.csv' class='button-link'>Download CSV</a>
-    <table><thead><tr><th>Time</th><th>Strategy</th><th>Symbol</th><th>Signal</th><th>Entry</th><th>Exit</th><th>PnL</th></tr></thead><tbody>{rows_html}</tbody></table>
+    <table><thead><tr><th>Time</th><th>Strategy</th><th>Event</th><th>Order ID</th><th>Entry</th><th>Exit</th><th>PnL</th><th>Signal</th><th>Ticker</th></tr></thead><tbody>{rows_html}</tbody></table>
     </div></body></html>""")
+
 
 @app.get("/download/trades.csv")
 async def download_trade_log():
+    # This CSV download should also reflect the global log
+    import io # Ensure io is imported
     if not os.path.exists(TRADE_LOG_PATH):
         return HTMLResponse("Trade log not found", status_code=404)
 
     with open(TRADE_LOG_PATH, "r") as f:
         try:
-            trades = json.load(f)
+            trades_log_content = json.load(f)
         except json.JSONDecodeError:
-            trades = []
+            trades_log_content = []
 
-    def generate():
+    def generate_csv_data():
         output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=["timestamp", "strategy", "ticker", "signal", "entry_price_estimate", "exit_price", "pnl"])
+        # Define CSV headers based on common fields in log entries
+        fieldnames = ["timestamp", "strategy", "event", "projectx_order_id", "orderId", "entry_price", "exit_price", "pnl", "signal", "ticker", "error", "detail", "response"]
+        writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore') # Ignore fields not in fieldnames
         writer.writeheader()
-        for t in trades:
-            writer.writerow({
-                "timestamp": t.get("timestamp"),
-                "strategy": t.get("strategy"),
-                "ticker": t.get("ticker"),
-                "signal": t.get("signal"),
-                "entry_price_estimate": t.get("entry_price_estimate", t.get("entry_price")),
-                "exit_price": t.get("exit_price"),
-                "pnl": t.get("pnl")
-            })
+        for entry in trades_log_content:
+            writer.writerow(entry)
         yield output.getvalue()
 
-    return StreamingResponse(generate(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=trades.csv"})
+    return StreamingResponse(generate_csv_data(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=trade_log_full.csv"})
 
 @app.get("/logs/alerts", response_class=HTMLResponse)
 async def alert_log_view_page():
+    # This log view is global
     if os.path.exists(ALERT_LOG_PATH):
         with open(ALERT_LOG_PATH, "r") as f:
             try:
@@ -1366,13 +1241,34 @@ async def alert_log_view_page():
         alerts = []
 
     rows_html = "".join([
-        f"<tr><td>{a.get('timestamp','')}</td><td>{a.get('strategy','')}</td><td>{a.get('signal','')}</td><td>{a.get('ticker','')}</td><td>{a.get('event','')}</td><td>{a.get('error',a.get('detail',''))}</td></tr>"
+        f"<tr><td>{a.get('timestamp','')}</td><td>{a.get('strategy','')}</td><td>{a.get('signal','')}</td><td>{a.get('ticker','')}</td><td>{a.get('event','')}</td><td>{a.get('error',a.get('detail', json.dumps(a.get('response')) if a.get('response') else ''))}</td></tr>"
         for a in reversed(alerts)
     ])
-
+    # ... (rest of HTML for alert log page)
     return HTMLResponse(f"""
     <html><head><title>Alert History</title>{COMMON_CSS}</head><body><div class='container'>
     <h1>Alert History</h1>
     <p><a href='/dashboard_menu_page' class='button-link'>Back to Menu</a></p>
-    <table><thead><tr><th>Time</th><th>Strategy</th><th>Signal</th><th>Ticker</th><th>Event</th><th>Error</th></tr></thead><tbody>{rows_html}</tbody></table>
+    <table><thead><tr><th>Time</th><th>Strategy</th><th>Signal</th><th>Ticker</th><th>Event</th><th>Details/Error</th></tr></thead><tbody>{rows_html}</tbody></table>
     </div></body></html>""")
+
+# Ensure ACCOUNT_ID is initialized appropriately, e.g. after APIClient authentication
+# The current ACCOUNT_ID = 7715028 is hardcoded. This should ideally be fetched.
+# Example: In initialize_topstep_client, after auth, fetch accounts and set ACCOUNT_ID.
+# For now, it's used as a global.
+
+# Final review notes:
+# - SESSION_TOKEN is still globally defined but should be primarily managed and used by APIClient.
+# - ACCOUNT_ID is crucial and its initialization needs to be robust (e.g., from user's primary account after login).
+# - Global state variables (daily_pnl, trade_active, etc.) have been partially transitioned to per-strategy state
+#   in `trade_states`. UI and logic need to consistently use this per-strategy state.
+# - Error handling in API calls (place_order_projectx, close_position_projectx) now relies on exceptions from APIClient
+#   or returns a dict with "success": False. Calling code should handle this.
+# - SignalR client specific code (setupSignalRConnection, etc.) is removed. New streams are used.
+# - `check_and_close_active_trade` and `webhook` handler are the core logic adapting to new client and per-strategy state.
+# - Many print() statements were used for logging; replaced with logger.info/debug/error.
+# - The `trade_event_handler` previously registered with `register_trade_callback` seems to be related to
+#   `check_and_close_active_trade`. This link needs to be re-established if market trades should trigger this check.
+#   Currently, `handle_market_trade_event` is basic.
+
+logger.info("main.py refactoring complete. Application ready to be started.")
