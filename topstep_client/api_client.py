@@ -221,6 +221,178 @@ class APIClient:
         # Let's assume _request and OrderDetails model are aligned for now or _request handles parsing to OrderDetails.
         return response_data # This should be an OrderDetails instance if parsing was successful
 
+    async def get_order_details(self, order_id: int, account_id: int) -> Optional[OrderDetails]:
+        """Fetches details for a specific order by its ID and account ID.
+
+        Args:
+            order_id: The ID of the order to fetch.
+            account_id: The account ID associated with the order.
+
+        Returns:
+            An OrderDetails object if found, otherwise None.
+        """
+        endpoint = "/api/Order/search"
+        payload = {
+            "ids": [order_id],
+            "accountId": account_id
+        }
+
+        logger.info(f"Fetching order details for Order ID: {order_id}, Account ID: {account_id}")
+
+        try:
+            # The API might return a list of orders in a wrapper like {"orders": [...]} or just a list.
+            # Assuming the API returns a structure like:
+            # { "orders": [ { "id": ..., "status": ... }, ... ], "total": 1 }
+            # or just [ { "id": ..., "status": ... } ] if only one is found.
+            # We need to handle both if response_model is not specific enough.
+            response_data = await self._request(
+                "POST",
+                endpoint,
+                payload=payload,
+                response_model=None # Get raw data first to inspect structure
+            )
+
+            orders_list_raw = []
+            if isinstance(response_data, list): # Direct list of orders
+                orders_list_raw = response_data
+            elif isinstance(response_data, dict) and "orders" in response_data and isinstance(response_data["orders"], list):
+                orders_list_raw = response_data["orders"]
+            elif isinstance(response_data, dict) and "id" in response_data: # Single order object directly
+                 orders_list_raw = [response_data]
+            else:
+                logger.warning(f"Unexpected response structure for get_order_details for order {order_id}: {str(response_data)[:200]}")
+                return None
+
+            if not orders_list_raw:
+                logger.info(f"No order found with ID {order_id} for account {account_id}.")
+                return None
+
+            # Find the specific order by ID, as search might return multiple if ids parameter is not exclusive
+            for order_data in orders_list_raw:
+                if order_data.get("id") == order_id:
+                    try:
+                        return OrderDetails.parse_obj(order_data)
+                    except ValidationError as e:
+                        logger.error(f"Pydantic validation error parsing order details for {order_id}: {e}. Raw data: {order_data}")
+                        raise APIResponseParsingError(f"Failed to parse order details for order {order_id}.", raw_response_text=str(order_data), original_exception=e) from e
+
+            logger.info(f"Order ID {order_id} not found in the response list for account {account_id}.")
+            return None
+
+        except APIResponseParsingError as e: # Catch parsing errors from _request itself if response_model was used
+            logger.error(f"APIResponseParsingError in get_order_details for order {order_id}: {e.raw_response_text}")
+            return None # Or re-raise depending on desired strictness
+        except APIRequestError as e:
+            logger.error(f"APIRequestError in get_order_details for order {order_id}: {e}")
+            # Depending on the error (e.g., 404 might mean not found), could return None or raise
+            if e.status_code == 404: # Example: Not Found
+                 logger.info(f"Order {order_id} not found (404).")
+                 return None
+            raise # Re-raise other APIRequestErrors
+        except Exception as e:
+            logger.error(f"Unexpected error in get_order_details for order {order_id}: {e}", exc_info=True)
+            raise TopstepAPIError(f"Unexpected error fetching order {order_id}: {str(e)}") from e
+
+    async def modify_order(
+        self,
+        order_id: int,
+        account_id: int,
+        new_quantity: Optional[int] = None,
+        new_limit_price: Optional[float] = None,
+        new_stop_price: Optional[float] = None,
+        new_type: Optional[str] = None # e.g., change from limit to stop-limit
+    ) -> OrderDetails:
+        """Modifies an existing order.
+        Uses /api/Order/replace endpoint.
+        Note: Not all parameters might be modifiable. Check API docs.
+        The API expects all relevant fields for the new order state.
+        """
+        endpoint = "/api/Order/replace" # Based on common API patterns, verify actual endpoint
+
+        payload = {
+            "orderId": order_id,
+            "accountId": account_id,
+        }
+        # Only include parameters if they are provided
+        if new_quantity is not None:
+            payload["qty"] = new_quantity
+        if new_limit_price is not None:
+            payload["limitPrice"] = new_limit_price
+        if new_stop_price is not None:
+            payload["stopPrice"] = new_stop_price
+        if new_type is not None: # Assuming 'type' is modifiable and uses same values as place_order
+            payload["type"] = new_type
+            # If type changes, other params like limitPrice/stopPrice might become mandatory or irrelevant
+
+        logger.info(f"Attempting to modify order {order_id} for account {account_id} with payload: {payload}")
+
+        # The response from /api/Order/replace is typically the new state of the order or a new orderId if replaced.
+        # Assuming it returns an OrderDetails-like structure.
+        # If it returns a simple success/failure, this needs to be adjusted.
+        # Based on TopStepX docs, "Replace Order" seems to return an OrderInfoDTO which should map to OrderDetails.
+        try:
+            response_data = await self._request(
+                "POST",
+                endpoint,
+                payload=payload,
+                response_model=OrderDetails # Expecting the modified order details back
+            )
+            return response_data
+        except APIRequestError as e:
+            logger.error(f"APIRequestError modifying order {order_id}: {e.response_text}")
+            # Consider raising a more specific OrderModificationError if desired
+            # For now, re-using OrderPlacementError as it's a similar context of failure
+            from .exceptions import OrderPlacementError # Local import to avoid circular if defined here
+            raise OrderPlacementError(f"Failed to modify order {order_id}: {e.message if hasattr(e, 'message') else str(e)}", status_code=e.status_code, response_text=e.response_text) from e
+        except Exception as e:
+            logger.error(f"Unexpected error modifying order {order_id}: {e}", exc_info=True)
+            raise TopstepAPIError(f"Unexpected error modifying order {order_id}: {str(e)}") from e
+
+    async def cancel_order(self, order_id: int, account_id: int) -> bool:
+        """Cancels an existing order.
+        Uses /api/Order/cancel endpoint.
+        Returns True if cancellation was successful according to API, False otherwise.
+        """
+        endpoint = "/api/Order/cancel" # Based on TopStepX docs for "Cancel Order"
+        payload = {
+            "orderId": order_id,
+            "accountId": account_id
+        }
+        logger.info(f"Attempting to cancel order {order_id} for account {account_id}")
+
+        try:
+            # TopStepX "Cancel Order" endpoint returns a simple boolean success in its JSON response: {"success": true/false}
+            # So we parse into our generic APIResponse and then check the success field.
+            response_wrapper = await self._request(
+                "POST",
+                endpoint,
+                payload=payload,
+                response_model=APIResponse
+            )
+            if response_wrapper.success:
+                logger.info(f"Order {order_id} cancelled successfully via API.")
+                return True
+            else:
+                # Log error message from response if available
+                error_msg = "Unknown reason for cancellation failure."
+                if response_wrapper.error and response_wrapper.error.error_message:
+                    error_msg = response_wrapper.error.error_message
+                elif isinstance(response_wrapper.data, dict) and "errorMessage" in response_wrapper.data: # Check data field too
+                    error_msg = response_wrapper.data["errorMessage"]
+
+                logger.warning(f"API reported cancellation of order {order_id} failed: {error_msg}")
+                return False
+        except APIRequestError as e:
+            # If API returns error status code (e.g. 400 if order already filled/cancelled)
+            logger.error(f"APIRequestError cancelling order {order_id}: {e.response_text}")
+            # Depending on the status code, you might interpret it differently.
+            # For example, a 404 or specific error code might mean it was already gone.
+            return False # Treat as cancellation failed from client's perspective of this call
+        except Exception as e:
+            logger.error(f"Unexpected error cancelling order {order_id}: {e}", exc_info=True)
+            # raise TopstepAPIError(f"Unexpected error cancelling order {order_id}: {str(e)}") from e
+            return False # Treat as cancellation failed
+
     async def get_historical_bars(
         self,
         contract_id: Union[str, int], # Can be string ID like CON.F.US.XXX or numeric instrumentId
