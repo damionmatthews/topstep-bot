@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request, Form, BackgroundTasks, APIRouter
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field # Ensured Field is imported
 from typing import Optional, List, Any # Added List, Any for new handlers
 from datetime import datetime
 from fastapi.middleware.cors import CORSMiddleware
@@ -526,8 +526,8 @@ class Trade: # Simple trade state tracking
             "status": self.status,
         }
 
-# --- Strategy-based Trade States ---
-trade_states: dict[str, dict[str, any]] = {} # Keyed by strategy_name
+
+trade_states: dict[str, dict[str, Any]] = {} # Keyed by strategy_name
 # Each strategy state: {"trade_active": bool, "daily_pnl": float, "current_trade": Optional[Trade]}
 
 # --- Update fetch_current_price ---

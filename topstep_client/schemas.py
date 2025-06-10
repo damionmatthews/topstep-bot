@@ -4,12 +4,11 @@ from datetime import datetime
 
 class BaseSchema(BaseModel):
     class Config:
-        alias_generator = lambda string: ''.join(word.capitalize() for word in string.split('_'))
-        allow_population_by_field_name = True
+        populate_by_name = True
         extra = 'ignore' # Allow ignoring extra fields from API response
 
 class TokenResponse(BaseSchema):
-    token: str
+    token: str = Field(..., alias='token')
     user_id: int = Field(..., alias='userId')
     acquired_at: datetime = Field(default_factory=datetime.utcnow)
     # Add other relevant fields if available from actual API response
