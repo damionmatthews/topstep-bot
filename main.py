@@ -307,9 +307,14 @@ async def status_endpoint_old(): # Renamed to avoid conflict
 
 # --- DATA MODEL ---
 class SignalAlert(BaseModel):
-    signal: str # 'long' or 'short'
-    ticker: Optional[str] = "NQ" # Default or from alert
-    time: Optional[str] = None # Alert timestamp
+    signal: str  # "long" or "short" still determines buy/sell side
+    ticker: Optional[str] = "NQ" # Default ticker
+    time: Optional[str] = None
+    order_type: str = Field(default="market", alias="orderType") # e.g., "market", "limit", "TrailingStop"
+    limit_price: Optional[float] = Field(default=None, alias="limitPrice")
+    stop_price: Optional[float] = Field(default=None, alias="stopPrice")
+    trailing_distance_ticks: Optional[int] = Field(default=None, alias="trailingDistance") # In ticks
+    quantity: Optional[int] = Field(default=None, alias="qty") # Allow overriding strategy trade size
 
 class StatusResponse(BaseModel):
     trade_active: bool
@@ -393,41 +398,68 @@ def log_event(file_path, event_data):
         f.truncate()
 
 # --- ORDER FUNCTIONS (adapted to use APIClient) ---
-async def place_order_projectx(signal_direction, strategy_cfg): # signal_direction is 'long' or 'short'
-    global ACCOUNT_ID # Ensure ACCOUNT_ID is set, e.g. in initialize_topstep_client
-    if not api_client: raise TopstepAPIError("APIClient not initialized")
-    if not ACCOUNT_ID: raise TopstepAPIError("ACCOUNT_ID not set")
+async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
+    if not api_client:
+        raise TopstepAPIError("APIClient not initialized")
 
-    order_type = "market"
-    side_val = "buy" if signal_direction == "long" else "sell"
+    order_account_id = int(ACCOUNT_ID) # Global ACCOUNT_ID
+    # Ensure alert.ticker is used if PROJECTX_CONTRACT_ID is not in strategy_cfg
+    order_contract_id = strategy_cfg.get("PROJECTX_CONTRACT_ID") or alert.ticker
+    if not order_contract_id:
+        raise ValueError("Contract ID is missing in strategy configuration or alert ticker.")
 
-    if "PROJECTX_CONTRACT_ID" not in strategy_cfg or not strategy_cfg["PROJECTX_CONTRACT_ID"]:
-        raise ValueError("PROJECTX_CONTRACT_ID is missing or empty in strategy configuration.")
+    order_quantity = alert.quantity if alert.quantity is not None else strategy_cfg.get("TRADE_SIZE", 1)
+    order_side = "buy" if alert.signal.lower() == "long" else "sell"
 
-    order_req = OrderRequest(
-        accountId=int(ACCOUNT_ID),
-        contractId=strategy_cfg["PROJECTX_CONTRACT_ID"],
-        qty=strategy_cfg["TRADE_SIZE"],
-        side=side_val,
-        type=order_type
-    )
-    logger.info(f"[Order Attempt] Sending order with payload: {order_req.dict(by_alias=True)}")
+    # Initialize with common parameters
+    pydantic_request_params = {
+        "account_id": order_account_id,
+        "contract_id": order_contract_id,
+        "qty": order_quantity,
+        "side": order_side,
+        "type": alert.order_type, # Use type directly from alert, assuming it's correct case e.g. "TrailingStop"
+    }
+
+    # Add type-specific parameters
+    if alert.order_type.lower() == "limit":
+        if alert.limit_price is None:
+            raise ValueError("limit_price is required for a limit order.")
+        pydantic_request_params["limit_price"] = alert.limit_price
+    elif alert.order_type == "TrailingStop": # Match exact case from API if necessary
+        if alert.trailing_distance_ticks is None:
+            raise ValueError("trailing_distance_ticks is required for a TrailingStop order.")
+        pydantic_request_params["trailing_distance"] = alert.trailing_distance_ticks
+    elif alert.order_type.lower() == "stop":
+        if alert.stop_price is None:
+            raise ValueError("stop_price is required for a stop order.")
+        pydantic_request_params["stop_price"] = alert.stop_price
+    elif alert.order_type.lower() == "market":
+        pass # No extra price parameters needed for market orders
+    else:
+        # Potentially unknown order type, log a warning but attempt placement
+        logger.warning(f"Order type '{alert.order_type}' received. If it requires specific parameters not handled (e.g. stopLimit), it may fail.")
+
+    logger.info(f"[Order Attempt] Constructing OrderRequest with: {pydantic_request_params}")
+    order_req = OrderRequest(**pydantic_request_params)
+
     try:
         result_details = await api_client.place_order(order_req)
-        if result_details and result_details.id is not None:
-            logger.info(f"✅ Order placed successfully. Order ID: {result_details.id}")
-            return {"success" : True, "orderId": result_details.id }
+        # Ensure result_details itself is not None before accessing attributes
+        if result_details and hasattr(result_details, 'id') and result_details.id is not None:
+            logger.info(f"✅ Order placed successfully via APIClient. Order ID: {result_details.id}, Status: {result_details.status}")
+            return {"success": True, "orderId": result_details.id, "status": result_details.status, "details": result_details.dict()}
         else:
-            logger.error(f"❌ Order placement seemed to succeed but no valid OrderDetails.id received. Response: {result_details}")
-            return {"success": False, "errorMessage": "Order placement failed to return valid order details."}
-    except APIRequestError as e:
-        logger.error(f"❌ Order placement failed via APIClient: {e.message if hasattr(e, 'message') else e}", exc_info=True)
-        # Return structure similar to old one for compatibility if needed by caller
-        return {"success": False, "errorMessage": e.message if hasattr(e, 'message') else str(e) }
-    except Exception as e: # Catch any other unexpected errors
-        logger.error(f"❌ Unexpected exception during order placement: {e}", exc_info=True)
-        return {"success": False, "errorMessage": str(e)}
-
+            logger.error(f"Order placement failed or id missing in APIClient response. Response: {result_details}")
+            return {"success": False, "errorMessage": "Order placement failed via APIClient or no order ID returned."}
+    except OrderPlacementError as ope:
+        logger.error(f"❌ OrderPlacementError: {ope.message} (Status: {ope.status_code}, Response: {ope.response_text})")
+        raise
+    except APIRequestError as are:
+        logger.error(f"❌ APIRequestError during order placement: {are.message} (Status: {are.status_code}, Response: {are.response_text})")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected exception during order placement: {str(e)}", exc_info=True)
+        raise TopstepAPIError(f"Unexpected error in place_order_projectx: {str(e)}")
 
 async def close_position_projectx(strategy_cfg: dict, current_active_signal: str):
     global ACCOUNT_ID # Ensure ACCOUNT_ID is set
@@ -730,13 +762,11 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
         return {"status": "error", "reason": "Server error: Account ID not configured."}
 
 
-    logger.info(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time if alert.time else 'N/A'}")
+    logger.info(f"[{strategy_webhook_name}] Received {alert.signal} signal for {alert.ticker} at {alert.time if alert.time else 'N/A'}, OrderType: {alert.order_type}")
 
     try:
-        # place_order_projectx now expects signal_direction ('long' or 'short')
-        signal_dir = "long" if "long" in alert.signal.lower() else "short" # Basic parsing
-
-        result = await place_order_projectx(signal_dir, strategy_cfg)
+        # Updated call to place_order_projectx, now passing the full alert object
+        result = await place_order_projectx(alert, strategy_cfg)
 
         if result.get("success") and result.get("orderId"):
             order_id = result["orderId"]
