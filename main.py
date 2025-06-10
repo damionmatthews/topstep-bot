@@ -421,21 +421,23 @@ pydantic_request_params = {
         "side": order_side,
         "type": alert.order_type,
     }
+
     if alert.order_type.lower() == "limit":
+        if alert.limit_price is None:
+            raise ValueError("limit_price is required for a limit order.")
         pydantic_request_params["limit_price"] = alert.limit_price
     elif alert.order_type == "TrailingStop":
+        if alert.trailing_distance_ticks is None:
+            raise ValueError("trailing_distance_ticks is required for a TrailingStop order.")
         pydantic_request_params["trailing_distance"] = alert.trailing_distance_ticks
-    elif alert.order_type.lower() == "stop":
-        pydantic_request_params["stop_price"] = alert.stop_price
     elif alert.order_type.lower() == "stop":
         if alert.stop_price is None:
             raise ValueError("stop_price is required for a stop order.")
         pydantic_request_params["stop_price"] = alert.stop_price
     elif alert.order_type.lower() == "market":
-        pass # No extra price parameters needed for market orders
+        pass
     else:
-        # Potentially unknown order type, log a warning but attempt placement
-        logger.warning(f"Order type '{alert.order_type}' received. If it requires specific parameters not handled (e.g. stopLimit), it may fail.")
+        logger.warning(f"Order type '{alert.order_type}' received. If it requires specific parameters not handled, it may fail.")
 
     logger.info(f"[Order Attempt] Constructing OrderRequest with: {pydantic_request_params}")
     order_req = OrderRequest(**pydantic_request_params)
