@@ -527,11 +527,11 @@ class Trade: # Simple trade state tracking
         }
 
 # --- Strategy-based Trade States ---
-trade_states: Dict[str, Dict[str, Any]] = {} # Keyed by strategy_name
+trade_states: dict[str, dict[str, any]] = {} # Keyed by strategy_name
 # Each strategy state: {"trade_active": bool, "daily_pnl": float, "current_trade": Optional[Trade]}
 
 # --- Update fetch_current_price ---
-def fetch_current_price(contract_id: Optional[str] = None) -> Optional[float]:
+def fetch_current_price(contract_id: optional[str] = None) -> Optional[float]:
     # This needs to get the latest price for a specific contract_id from latest_market_trades or latest_market_quotes
     # For simplicity, let's assume latest_market_trades contains trades with 'price' and 'contractId'
     if not contract_id: # If no specific contract, try to get a general one (less ideal)
