@@ -527,7 +527,7 @@ class Trade: # Simple trade state tracking
         }
 
 # --- Strategy-based Trade States ---
-trade_states: Dict[str, Dict[str, Any]] = {} # Keyed by strategy_name
+trade_states: dict[str, dict[str, Any]] = {} # Keyed by strategy_name
 # Each strategy state: {"trade_active": bool, "daily_pnl": float, "current_trade": Optional[Trade]}
 
 # --- Update fetch_current_price ---
