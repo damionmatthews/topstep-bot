@@ -39,7 +39,8 @@ class OrderRequest(BaseSchema):
     contract_id: str = Field(..., alias='contractId')
     quantity: int = Field(..., alias='qty')
     side: str # "buy" or "sell"
-    type: str # "market", "limit", "stop"
+    type: str # "market", "limit", "stop", "TrailingStop"
+    trailing_distance: Optional[int] = Field(default=None, alias="trailingDistance")
     limit_price: Optional[float] = Field(default=None, alias='limitPrice')
     stop_price: Optional[float] = Field(default=None, alias='stopPrice')
     # Add other relevant fields like time_in_force, etc.
