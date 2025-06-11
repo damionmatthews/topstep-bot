@@ -414,7 +414,7 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
     order_side = "buy" if alert.signal.lower() == "long" else "sell"
 
     # Initialize with common parameters
-pydantic_request_params = {
+    pydantic_request_params = {
         "account_id": order_account_id,
         "contract_id": order_contract_id,
         "qty": order_quantity,
