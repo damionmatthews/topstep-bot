@@ -189,10 +189,20 @@ class APIClient:
         else:
             raise APIResponseParsingError(f"Unexpected response structure for get_accounts. Expected list or dict with 'accounts' key. Got: {type(response_data)} ({str(response_data)[:100]})", raw_response_text=str(response_data))
 
-        try:
-            return [Account.parse_obj(acc) for acc in accounts_list_raw]
-        except ValidationError as e:
-            raise APIResponseParsingError("Failed to parse account data.", raw_response_text=str(accounts_list_raw), original_exception=e) from e
+        parsed_accounts = []
+        for acc_item in accounts_list_raw:
+            try:
+                parsed_accounts.append(Account.parse_obj(acc_item))
+            except ValidationError as e:
+                logger.error(f"Pydantic ValidationError for an account item. Data: {acc_item}", exc_info=True)
+                # Optionally, include more details from 'e' like e.errors()
+                # We still raise the more general error for the calling function to handle
+                raise APIResponseParsingError(
+                    f"Failed to parse an individual account item. Problematic item: {acc_item}",
+                    raw_response_text=str(acc_item), # Log the specific failing item
+                    original_exception=e
+                ) from e
+        return parsed_accounts
 
     async def search_contracts(self, search_text: str, live: bool = False) -> List[Contract]:
         payload = {"live": live, "searchText": search_text}
