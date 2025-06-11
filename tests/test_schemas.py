@@ -55,3 +55,10 @@ def test_order_request_serialization_without_trailing_distance():
     assert "trailDistance" not in request_dict
     assert "trailingStopTicks" not in request_dict
     assert "trailing_distance" not in request_dict
+
+
+def test_import_order_side_from_topstep_client():
+    from topstep_client import OrderSide
+
+    assert OrderSide.Bid == 0
+    assert OrderSide.Ask == 1
