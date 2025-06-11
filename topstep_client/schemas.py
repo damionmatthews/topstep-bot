@@ -6,8 +6,8 @@ from enum import IntEnum
 class BaseSchema(BaseModel):
     class Config:
         populate_by_name = True
-        extra = 'ignore'
-        use_enum_values = True
+        extra = 'ignore' 
+        use_enum_values = True 
 
 class LoginErrorCode(IntEnum):
     Success = 0
@@ -160,7 +160,7 @@ class ContractModel(BaseSchema):
 
 class SearchContractResponse(BaseSchema):
     success: bool
-    error_code: SearchContractErrorCode = Field(..., alias='errorCode')
+    error_code: SearchContractErrorCode = Field(..., alias='errorCode') 
     error_message: Optional[str] = Field(default=None)
     contracts: Optional[List[ContractModel]] = Field(default_factory=list)
 
@@ -203,7 +203,7 @@ class SearchOrderRequest(BaseSchema): # Added this schema
 
 class SearchOrderResponse(BaseSchema):
     success: bool
-    error_code: SearchOrderErrorCode = Field(..., alias="errorCode")
+    error_code: SearchOrderErrorCode = Field(..., alias="errorCode") 
     error_message: Optional[str] = None
     orders: List[OrderModel] = Field(default_factory=list)
 
@@ -236,7 +236,7 @@ class ModifyOrderRequest(BaseSchema):
 
 class ModifyOrderResponse(BaseSchema):
     success: bool
-    error_code: ModifyOrderErrorCode = Field(..., alias="errorCode")
+    error_code: ModifyOrderErrorCode = Field(..., alias="errorCode") 
     error_message: Optional[str] = None
 
     @field_validator('error_code', mode='before')
@@ -251,7 +251,7 @@ class CancelOrderRequest(BaseSchema):
 
 class CancelOrderResponse(BaseSchema):
     success: bool
-    error_code: CancelOrderErrorCode = Field(..., alias="errorCode")
+    error_code: CancelOrderErrorCode = Field(..., alias="errorCode") 
     error_message: Optional[str] = None
 
     @field_validator('error_code', mode='before')
@@ -271,7 +271,7 @@ class PositionModel(BaseSchema):
 
 class SearchPositionResponse(BaseSchema):
     success: bool
-    error_code: SearchPositionErrorCode = Field(..., alias="errorCode")
+    error_code: SearchPositionErrorCode = Field(..., alias="errorCode") 
     error_message: Optional[str] = None
     positions: List[PositionModel] = Field(default_factory=list)
 
@@ -301,7 +301,7 @@ class RetrieveBarRequest(BaseSchema):
 
 class RetrieveBarResponse(BaseSchema):
     success: bool
-    error_code: RetrieveBarErrorCode = Field(..., alias="errorCode")
+    error_code: RetrieveBarErrorCode = Field(..., alias="errorCode") 
     error_message: Optional[str] = None
     bars: List[AggregateBarModel] = Field(default_factory=list)
 
@@ -312,7 +312,7 @@ class RetrieveBarResponse(BaseSchema):
 
 
 class ErrorDetail(BaseSchema): # Kept for generic error use if needed
-    error_code: Optional[str] = Field(default=None, alias='errorCode')
+    error_code: Optional[str] = Field(default=None, alias='errorCode') 
     error_message: Optional[str] = Field(default=None, alias='errorMessage')
     details: Optional[Any] = None
 
@@ -332,4 +332,3 @@ OrderDetails = OrderModel       # This was a major rename
 BarData = AggregateBarModel
 HistoricalBarsResponse = RetrieveBarResponse # This was a major structural change in client
 PositionSchema = PositionModel
-```
