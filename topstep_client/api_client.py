@@ -1,11 +1,25 @@
 import httpx
 import os
 import logging
+import asyncio # Added asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Type, TypeVar, Any, Dict, Union, List
 from pydantic import BaseModel, ValidationError # Ensure BaseModel is imported if used in type hints
 
-from .schemas import TokenResponse, Account, Contract, OrderRequest, OrderDetails, APIResponse, ErrorDetail, BaseSchema, BarData, HistoricalBarsResponse
+from .schemas import (
+    TokenResponse,
+    Account,
+    Contract,
+    OrderRequest,
+    OrderDetails,
+    APIResponse,
+    ErrorDetail,
+    BaseSchema,
+    BarData,
+    HistoricalBarsResponse,
+    OpenOrderSchema, # Added
+    PositionSchema   # Added
+)
 from .exceptions import AuthenticationError, APIRequestError, APIResponseParsingError, TopstepAPIError
 
 logger = logging.getLogger(__name__)
@@ -478,6 +492,37 @@ class APIClient:
         except ValidationError as e:
             logger.error(f"Pydantic validation error parsing historical bars: {e}. Raw response: {raw_response if 'raw_response' in locals() else 'N/A'}")
             raise APIResponseParsingError("Failed to parse historical bars response.", raw_response_text=str(raw_response if 'raw_response' in locals() else 'N/A'), original_exception=e) from e
+
+    async def get_open_orders(self, account_id: int) -> List[OpenOrderSchema]:
+        logger.info(f"Attempting to fetch open orders for account ID: {account_id}")
+        # This is a placeholder/simulation.
+        # A real implementation would query an endpoint like /api/Order/search
+        # with appropriate filters for status (e.g., "Working", "Pending", "Accepted").
+        # For now, returning an empty list to allow UI/endpoint structure development.
+        # Example of what a real call might look like:
+        # payload = {"accountId": account_id, "status": ["Working", "PendingNew"]} # Fictional status filter
+        # response_data = await self._request("POST", "/api/Order/search", payload=payload)
+        # then parse response_data into List[OpenOrderSchema]
+        logger.warning(f"SIMULATED: get_open_orders for account {account_id} returning empty list.")
+        await asyncio.sleep(0.1) # Simulate async behavior
+        return []
+        # Example of returning a dummy order for testing:
+        # return [OpenOrderSchema(id=12345, accountId=account_id, status="Working", contractId="CON.F.US.NQ.M25", side="buy", quantity=1)]
+
+    async def get_positions(self, account_id: int) -> List[PositionSchema]:
+        logger.info(f"Attempting to fetch positions for account ID: {account_id}")
+        # This is a placeholder/simulation.
+        # A real implementation would query an endpoint like /api/Position/search or /api/Position/all.
+        # For now, returning an empty list.
+        # Example of what a real call might look like:
+        # payload = {"accountId": account_id}
+        # response_data = await self._request("POST", "/api/Position/search", payload=payload)
+        # then parse response_data into List[PositionSchema]
+        logger.warning(f"SIMULATED: get_positions for account {account_id} returning empty list.")
+        await asyncio.sleep(0.1) # Simulate async behavior
+        return []
+        # Example of returning a dummy position for testing:
+        # return [PositionSchema(accountId=account_id, contractId="CON.F.US.NQ.M25", quantity=2, side="Long", averageEntryPrice=18000.0)]
 
     async def close(self):
         await self._client.aclose()

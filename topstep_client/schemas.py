@@ -80,3 +80,20 @@ class HistoricalBarsResponse(BaseSchema):
     # The API might wrap the list, e.g., {"data": {"bars": [...]}} or directly {"bars": [...]}
     # Or even just a direct list of bars. This needs to match the actual API response.
     # For now, assuming the API response is a list of bars directly or under a 'bars' key.
+
+class OpenOrderSchema(BaseSchema):
+    id: int
+    account_id: int = Field(..., alias="accountId")
+    status: str
+    # Add other fields if necessary, like contract_id, side, qty for display/logging
+    contract_id: Optional[str] = Field(default=None, alias="contractId")
+    side: Optional[str] = None
+    quantity: Optional[int] = Field(default=None, alias="qty")
+
+class PositionSchema(BaseSchema):
+    account_id: int = Field(..., alias="accountId")
+    contract_id: str = Field(..., alias="contractId")
+    quantity: float # Position quantity can be float for some asset types, or int
+    side: str # e.g., "Long", "Short" or "Buy", "Sell" - normalize if needed
+    # Add other fields like average_entry_price if available and needed
+    average_entry_price: Optional[float] = Field(default=None, alias="averageEntryPrice")
