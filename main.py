@@ -169,6 +169,75 @@ def handle_market_stream_state_change(state: StreamConnectionState):
 def handle_user_stream_state_change(state: StreamConnectionState):
     logger.info(f"User Hub Stream state changed: {state.value}")
 
+async def ensure_market_stream_for_contract(contract_id: str):
+    global market_stream
+    if not market_stream:
+        logger.error("MarketDataStream is not initialized. Cannot ensure stream for contract.")
+        return
+
+    if market_stream.current_state != StreamConnectionState.CONNECTED:
+        logger.info(f"MarketDataStream not connected. Attempting to start for contract {contract_id}...")
+        try:
+            success = await market_stream.start()
+            if not success:
+                logger.error(f"Failed to start MarketDataStream for contract {contract_id}.")
+                return
+            # Wait a brief moment for connection to fully establish if start() is not fully blocking
+            await asyncio.sleep(1) # Allow time for _on_open to potentially fire
+        except Exception as e:
+            logger.error(f"Exception starting MarketDataStream for {contract_id}: {e}", exc_info=True)
+            return
+
+    # Subscribe (MarketDataStream.subscribe_contract should be idempotent or handle existing subscriptions)
+    if market_stream.current_state == StreamConnectionState.CONNECTED:
+        logger.info(f"Ensuring subscription to {contract_id} on MarketDataStream.")
+        market_stream.subscribe_contract(contract_id)
+    else:
+        logger.warning(f"MarketDataStream still not connected after start attempt. Cannot subscribe to {contract_id}.")
+
+async def manage_market_stream_after_trade_close(closed_trade_contract_id: str):
+    global market_stream, trade_states, strategies # Ensure strategies is accessible
+    if not market_stream:
+        logger.warning("MarketDataStream not initialized, cannot manage after trade close.")
+        return
+
+    if not closed_trade_contract_id or closed_trade_contract_id == "UNKNOWN_CONTRACT":
+        logger.warning(f"Invalid or unknown contract ID ('{closed_trade_contract_id}') for closed trade. Cannot manage market stream subscriptions.")
+        return
+
+    # Check if any other active trades are using this contract_id
+    is_contract_still_active = False
+    for strategy_name, state in trade_states.items():
+        if state.get("trade_active"):
+            current_trade_in_state: Optional[Trade] = state.get("current_trade")
+            # Ensure current_trade_in_state and its contract_id are valid before comparing
+            if current_trade_in_state and \
+               hasattr(current_trade_in_state, 'contract_id') and \
+               current_trade_in_state.contract_id == closed_trade_contract_id:
+                is_contract_still_active = True
+                break
+
+    if not is_contract_still_active:
+        logger.info(f"No other active trades for {closed_trade_contract_id}. Unsubscribing from MarketDataStream.")
+        if market_stream.current_state == StreamConnectionState.CONNECTED:
+            market_stream.unsubscribe_contract(closed_trade_contract_id)
+            # Give a moment for unsubscribe to process if needed
+            await asyncio.sleep(0.5)
+        else:
+            # If not connected, ensure it's removed from the internal list for next connect
+            # This check is important to prevent errors if _subscriptions is None or contract_id is not present
+            if hasattr(market_stream, '_subscriptions') and market_stream._subscriptions is not None and closed_trade_contract_id in market_stream._subscriptions:
+                 market_stream._subscriptions.remove(closed_trade_contract_id)
+            logger.info(f"Market stream not connected, noted unsubscription for {closed_trade_contract_id}.")
+
+        # Check if any subscriptions are left at all
+        # Accessing _subscriptions directly; ideally MarketDataStream would have a public property/method
+        if hasattr(market_stream, '_subscriptions') and not market_stream._subscriptions:
+            logger.info("No active market data subscriptions left. Stopping MarketDataStream.")
+            await market_stream.stop()
+    else:
+        logger.info(f"Contract {closed_trade_contract_id} is still active in other trades. Market stream subscription retained.")
+
 async def stop_all_streams():
     global market_stream, user_stream
     if market_stream and market_stream.current_state != StreamConnectionState.DISCONNECTED:
@@ -532,10 +601,11 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
 
 # Define the Trade class
 class Trade: # Simple trade state tracking
-    def __init__(self, strategy_name: str, order_id: int, direction: str, account_id: int, entry_price: Optional[float] = None, size: int = 1):
+    def __init__(self, strategy_name: str, order_id: int, direction: str, account_id: int, contract_id: str, entry_price: Optional[float] = None, size: int = 1):
         self.strategy_name = strategy_name
         self.order_id = order_id
         self.account_id = account_id
+        self.contract_id = contract_id
         self.entry_price = entry_price
         self.direction = direction # 'long' or 'short'
         self.size = size
@@ -549,6 +619,7 @@ class Trade: # Simple trade state tracking
             "strategy_name": self.strategy_name,
             "order_id": self.order_id,
             "account_id": self.account_id,
+            "contract_id": self.contract_id,
             "entry_price": self.entry_price,
             "direction": self.direction,
             "size": self.size,
@@ -653,8 +724,15 @@ def handle_user_trade(trade_data_item: dict): # Renamed arg to avoid conflict, p
                         })
                         logger.info(f"[UserHubCallback] Exit for trade {order_id} (Strat: {strategy_name}). Exit Price: {price}, PnL: {pnl_dollars:.2f}")
 
+                        closed_trade_obj_ref = current_trade_obj # Keep reference before clearing
                         state["trade_active"] = False
                         state["current_trade"] = None # Clear the trade
+
+                        if closed_trade_obj_ref and hasattr(closed_trade_obj_ref, 'contract_id') and closed_trade_obj_ref.contract_id:
+                            logger.info(f"Trade closed for contract {closed_trade_obj_ref.contract_id}. Scheduling stream management.")
+                            asyncio.create_task(manage_market_stream_after_trade_close(closed_trade_obj_ref.contract_id))
+                        else:
+                            logger.warning(f"Closed trade object ({closed_trade_obj_ref.order_id if closed_trade_obj_ref else 'N/A'}) or its contract_id not available for stream management.")
 
                 elif status == "Closed": # Order is no longer active, might be fully filled or cancelled
                     if current_trade_obj.status == "open_filled" and current_trade_obj.exit_price is None:
@@ -764,8 +842,8 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
 # strategy_that_opened_trade = None # Replaced by per-strategy state in trade_states
 
 @app.post("/webhook/{strategy_webhook_name}")
-async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert):
-    global trade_states, ACCOUNT_ID
+async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert, background_tasks: BackgroundTasks):
+    global trade_states, ACCOUNT_ID, strategies # Ensure strategies is accessible for strategy_cfg
 
     log_event(ALERT_LOG_PATH, {
         "event": "Webhook Received", "strategy": strategy_webhook_name,
@@ -809,7 +887,8 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
                 strategy_name=strategy_webhook_name,
                 order_id=order_id,
                 direction=signal_dir,
-                account_id=alert.account_id, # Pass account_id from alert
+                account_id=alert.account_id,
+                contract_id=result.get("details", {}).get("contractId", "UNKNOWN_CONTRACT"), # Get contract_id from order result
                 entry_price=None,
                 size=strategy_cfg.get("TRADE_SIZE", 1)
             )
@@ -820,6 +899,20 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
                 "signal": alert.signal, "ticker": alert.ticker,
                 "projectx_order_id": order_id, "timestamp": datetime.utcnow().isoformat()
             })
+
+            # Ensure market data stream is active for the traded contract
+            contract_to_subscribe = alert.ticker # Primary source from alert
+            if not contract_to_subscribe:
+                 # Access strategy_cfg which should be defined earlier in this function
+                strategy_cfg_for_contract = strategies.get(strategy_webhook_name, {})
+                contract_to_subscribe = strategy_cfg_for_contract.get("PROJECTX_CONTRACT_ID") # Fallback
+
+            if contract_to_subscribe:
+                background_tasks.add_task(ensure_market_stream_for_contract, contract_to_subscribe)
+                logger.info(f"Scheduled MarketDataStream check/start for contract {contract_to_subscribe} in background.")
+            else:
+                logger.error(f"No contract ID available to ensure market stream for strategy {strategy_webhook_name}.")
+
             return {"status": "trade_placed", "projectx_order_id": order_id}
         else:
             error_msg = result.get("errorMessage", "Unknown error placing order.")
@@ -836,7 +929,7 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
         return {"status": "error", "detail": str(e)}
 
 @app.post("/manual/market_order", summary="Place a manual market order")
-async def post_manual_market_order(params: ManualTradeParams):
+async def post_manual_market_order(params: ManualTradeParams, background_tasks: BackgroundTasks):
     if not api_client:
         return {"success": False, "message": "APIClient not initialized."}
 
@@ -858,6 +951,11 @@ async def post_manual_market_order(params: ManualTradeParams):
             msg = f"Market order placed successfully. Order ID: {result_details.id}, Status: {result_details.status}"
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_market_order_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
+
+            # Ensure market data stream is active for the traded contract
+            background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id)
+            logger.info(f"Scheduled MarketDataStream check/start for contract {params.contract_id} in background.")
+
             return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
         else:
             msg = f"Market order placement failed or no order ID returned. Response: {result_details}"
@@ -870,7 +968,7 @@ async def post_manual_market_order(params: ManualTradeParams):
         return {"success": False, "message": f"An exception occurred: {str(e)}"}
 
 @app.post("/manual/trailing_stop_order", summary="Place a manual trailing stop order")
-async def post_manual_trailing_stop_order(params: ManualTradeParams):
+async def post_manual_trailing_stop_order(params: ManualTradeParams, background_tasks: BackgroundTasks):
     if not api_client:
         return {"success": False, "message": "APIClient not initialized."}
 
@@ -896,6 +994,11 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams):
             msg = f"Trailing stop order placed successfully. Order ID: {result_details.id}, Status: {result_details.status}"
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_trailing_stop_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
+
+            # Ensure market data stream is active for the traded contract
+            background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id)
+            logger.info(f"Scheduled MarketDataStream check/start for contract {params.contract_id} in background.")
+
             return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
         else:
             msg = f"Trailing stop order placement failed or no order ID returned. Response: {result_details}"
