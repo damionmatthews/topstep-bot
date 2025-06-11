@@ -7,7 +7,7 @@
       "contractId": "CON.F.US.EP.M25",
       "side": "long",
       "size": 1,
-      "trailingStopTicks": 100
+      "trailingDistance": 100
     },
     "result": {
       "orderId": 12345,
