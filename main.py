@@ -22,6 +22,11 @@ from topstep_client import (
     OrderDetails,
     PlaceOrderResponse
 )
+from topstep_client.schemas import (
+    OrderSide, 
+    OrderType, 
+    PositionType
+)
 
 import httpx # Kept for now, though direct usage should be minimized
 import os
