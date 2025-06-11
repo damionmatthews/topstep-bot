@@ -406,9 +406,17 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
 
     order_account_id = alert.account_id # Use accountId from alert
     # Ensure alert.ticker is used if PROJECTX_CONTRACT_ID is not in strategy_cfg
-    order_contract_id = strategy_cfg.get("PROJECTX_CONTRACT_ID") or alert.ticker
+    # Prioritize contract ID from the alert's ticker field
+    order_contract_id = alert.ticker
     if not order_contract_id:
-        raise ValueError("Contract ID is missing in strategy configuration or alert ticker.")
+        logger.warning(f"No contract_id (ticker) provided in webhook alert for strategy {strategy_cfg.get('CONTRACT_SYMBOL', 'N/A')}. Falling back to strategy config's PROJECTX_CONTRACT_ID.")
+        order_contract_id = strategy_cfg.get("PROJECTX_CONTRACT_ID")
+
+    # Final check if a contract ID could be determined
+    if not order_contract_id:
+        err_msg = "Contract ID is missing: not provided in alert (ticker) and not found in strategy configuration (PROJECTX_CONTRACT_ID)."
+        logger.error(err_msg)
+        raise ValueError(err_msg)
 
     order_quantity = alert.quantity if alert.quantity is not None else strategy_cfg.get("TRADE_SIZE", 1)
     order_side = "buy" if alert.signal.lower() == "long" else "sell"
@@ -461,10 +469,8 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
         logger.error(f"❌ Unexpected exception during order placement: {str(e)}", exc_info=True)
         raise TopstepAPIError(f"Unexpected error in place_order_projectx: {str(e)}")
 
-async def close_position_projectx(strategy_cfg: dict, current_active_signal: str):
-    global ACCOUNT_ID # Ensure ACCOUNT_ID is set
+async def close_position_projectx(strategy_cfg: dict, current_active_signal: str, target_account_id: int):
     if not api_client: raise TopstepAPIError("APIClient not initialized")
-    if not ACCOUNT_ID: raise TopstepAPIError("ACCOUNT_ID not set")
 
     # Determine side for closing order
     close_side = "sell" if current_active_signal == "long" else "buy"
@@ -478,7 +484,7 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     # For now, assuming placing an opposing market order for the full size of the trade.
     # The quantity might need to be fetched from current position state if not closing full initial size.
     order_req = OrderRequest(
-        accountId=int(ACCOUNT_ID),
+        accountId=target_account_id,
         contractId=strategy_cfg["PROJECTX_CONTRACT_ID"],
         qty=strategy_cfg["TRADE_SIZE"], # Assuming full close of original trade size
         side=close_side,
@@ -502,9 +508,10 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
 
 # Define the Trade class
 class Trade: # Simple trade state tracking
-    def __init__(self, strategy_name: str, order_id: int, direction: str, entry_price: Optional[float] = None, size: int = 1):
+    def __init__(self, strategy_name: str, order_id: int, direction: str, account_id: int, entry_price: Optional[float] = None, size: int = 1):
         self.strategy_name = strategy_name
         self.order_id = order_id
+        self.account_id = account_id
         self.entry_price = entry_price
         self.direction = direction # 'long' or 'short'
         self.size = size
@@ -517,6 +524,7 @@ class Trade: # Simple trade state tracking
         return {
             "strategy_name": self.strategy_name,
             "order_id": self.order_id,
+            "account_id": self.account_id,
             "entry_price": self.entry_price,
             "direction": self.direction,
             "size": self.size,
@@ -683,7 +691,7 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
         try:
             # Mark the trade as "closing" before sending order, so UserHub fill can identify it as an exit
             current_trade_obj.status = "closing"
-            close_response = await close_position_projectx(trade_strategy_cfg, current_trade_obj.direction)
+            close_response = await close_position_projectx(trade_strategy_cfg, current_trade_obj.direction, current_trade_obj.account_id)
             if close_response.get("success"):
                 logger.info(f"[{strategy_name_of_trade}] Close order placed. Order ID: {close_response.get('orderId')}. Waiting for fill via UserHub.")
                 # PnL calculation and state reset will now primarily happen in handle_user_trade when fill is confirmed
@@ -712,7 +720,7 @@ async def check_and_close_active_trade(strategy_name_of_trade: str):
             logger.info(f"Forcing close of active trade for strategy {strategy_name_of_trade} due to daily PnL limit.")
             try:
                 current_trade_obj.status = "closing" # Mark for exit
-                close_response = await close_position_projectx(trade_strategy_cfg, current_trade_obj.direction)
+                close_response = await close_position_projectx(trade_strategy_cfg, current_trade_obj.direction, current_trade_obj.account_id)
                 if close_response.get("success"):
                     logger.info(f"[{strategy_name_of_trade}] Daily limit force-close order placed. Order ID: {close_response.get('orderId')}. Waiting for fill.")
                     # PnL and state reset in handle_user_trade
@@ -770,12 +778,14 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
 
         if result.get("success") and result.get("orderId"):
             order_id = result["orderId"]
+            signal_dir = "long" if alert.signal.lower() == "long" else "short"
             # Create a new Trade object and store it in this strategy's state
             # Entry price is initially None; UserHubStream callback (handle_user_trade) will update it on fill
             state["current_trade"] = Trade(
                 strategy_name=strategy_webhook_name,
                 order_id=order_id,
                 direction=signal_dir,
+                account_id=alert.account_id, # Pass account_id from alert
                 entry_price=None,
                 size=strategy_cfg.get("TRADE_SIZE", 1)
             )
