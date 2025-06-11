@@ -129,8 +129,8 @@ class BaseStream:
 
                 self._connection = HubConnectionBuilder() \
                     .with_url(hub_url, options={
-                        "access_token_factory": lambda: self._ensure_token(),
-                        "skip_negotiation": True # As per tsxapi4py
+                        "access_token_factory": lambda: self._current_token, # Changed line
+                        "skip_negotiation": True
                     }) \
                     .with_automatic_reconnect({
                         "type": "interval",
