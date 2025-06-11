@@ -17,7 +17,7 @@ from .schemas import (
     ErrorDetail,
     BaseSchema,
     BarData,
-    HistoricalBarsResponse
+    HistoricalBarsResponse,
     OrderSide,
 )
 from .api_client import APIClient, get_authenticated_client
