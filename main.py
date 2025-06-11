@@ -384,7 +384,7 @@ class SignalAlert(BaseModel):
         order_type: str = Field(default="market", alias="orderType")
         limit_price: Optional[float] = Field(default=None, alias="limitPrice")
         stop_price: Optional[float] = Field(default=None, alias="stopPrice")
-        trailing_distance_ticks: Optional[int] = Field(default=None, alias="trailingDistance")
+        trailingDistance: Optional[int] = Field(default=None, alias="trailingDistance")
         quantity: Optional[int] = Field(default=None, alias="qty")
         account_id: int = Field(alias="accountId") # Add this line
 
@@ -530,9 +530,9 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
             raise ValueError("limit_price is required for a limit order.")
         pydantic_request_params["limit_price"] = alert.limit_price
     elif alert.order_type.lower() == "trailingstop": # Check against lowercased string
-        if alert.trailing_distance_ticks is None:
-            raise ValueError("trailing_distance_ticks is required for a TrailingStop order.")
-        pydantic_request_params["trailing_distance"] = alert.trailing_distance_ticks
+        if alert.trailingDistance is None:
+            raise ValueError("trailingDistance is required for a TrailingStop order.")
+        pydantic_request_params["trailingDistance"] = alert.trailingDistance
     elif alert.order_type.lower() == "stop":
         if alert.stop_price is None:
             raise ValueError("stop_price is required for a stop order.")
@@ -988,7 +988,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
         quantity=params.size,
         side=order_side_numeric,
         type=5,  # TrailingStop order type code
-        trailing_distance=params.trailingDistance
+        trailingDistance=params.trailingDistance
     )
 
     try:
