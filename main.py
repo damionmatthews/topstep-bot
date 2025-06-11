@@ -139,9 +139,9 @@ async def start_streams_if_needed():
 
         contract_id_to_subscribe = active_strategy_config.get("PROJECTX_CONTRACT_ID") or os.getenv("CONTRACT_ID") or "CON.F.US.NQ.M25"
         if contract_id_to_subscribe:
-            asyncio.create_task(market_stream.start())
-            market_stream.subscribe_contract(contract_id_to_subscribe)
-            logger.info(f"Market stream start initiated. Will subscribe to {contract_id_to_subscribe} on connect.")
+            # asyncio.create_task(market_stream.start()) # Commented out as per requirement
+            # market_stream.subscribe_contract(contract_id_to_subscribe) # Commented out as per requirement
+            logger.info(f"Market stream start and subscription are now deferred until explicitly needed by a trade for contract {contract_id_to_subscribe}.") # Updated log message
         else:
             logger.error("No contract ID configured for market data stream.")
 
