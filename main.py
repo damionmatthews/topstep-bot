@@ -940,7 +940,7 @@ async def post_manual_market_order(params: ManualTradeParams, background_tasks: 
     order_req = OrderRequest(
         account_id=params.account_id,
         contract_id=params.contract_id,
-        qty=params.size,
+        quantity=params.size,
         side=order_side_numeric,
         type=2  # Market order type code
     )
@@ -982,7 +982,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
     order_req = OrderRequest(
         account_id=params.account_id,
         contract_id=params.contract_id,
-        qty=params.size,
+        quantity=params.size,
         side=order_side_numeric,
         type=5,  # TrailingStop order type code
         trailing_distance=params.trailing_stop_ticks
