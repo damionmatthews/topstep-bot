@@ -36,7 +36,7 @@ class Contract(BaseSchema):
 class OrderRequest(BaseSchema):
     account_id: int = Field(..., alias='accountId')
     contract_id: str = Field(..., alias='contractId')
-    quantity: int = Field(..., alias='qty')
+    quantity: int = Field(..., alias='size')
     side: int # Changed
     type: int # Changed
     trailing_distance: Optional[int] = Field(default=None, alias="trailingDistance")
