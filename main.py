@@ -430,22 +430,36 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
         raise ValueError(err_msg)
 
     order_quantity = alert.quantity if alert.quantity is not None else strategy_cfg.get("TRADE_SIZE", 1)
-    order_side = "buy" if alert.signal.lower() == "long" else "sell"
+    order_side_numeric = 0 if alert.signal.lower() == "long" else 1 # 0 for Buy, 1 for Sell
+
+    order_type_str = alert.order_type.lower()
+    if order_type_str == "market":
+        order_type_numeric = 2
+    elif order_type_str == "limit":
+        order_type_numeric = 1
+    elif order_type_str == "stop": # Assuming "stop" is for stop market
+        order_type_numeric = 3
+    elif order_type_str == "trailingstop": # Consistent casing with potential alert values
+        order_type_numeric = 5
+    else:
+        logger.error(f"Unknown order type from webhook: {alert.order_type}")
+        raise ValueError(f"Unknown order type from webhook: {alert.order_type}")
 
     # Initialize with common parameters
     pydantic_request_params = {
         "account_id": order_account_id,
         "contract_id": order_contract_id,
         "qty": order_quantity,
-        "side": order_side,
-        "type": alert.order_type,
+        "side": order_side_numeric,
+        "type": order_type_numeric,
     }
 
+    # Conditional parameter logic still uses alert.order_type (string) for clarity
     if alert.order_type.lower() == "limit":
         if alert.limit_price is None:
             raise ValueError("limit_price is required for a limit order.")
         pydantic_request_params["limit_price"] = alert.limit_price
-    elif alert.order_type == "TrailingStop":
+    elif alert.order_type.lower() == "trailingstop": # Check against lowercased string
         if alert.trailing_distance_ticks is None:
             raise ValueError("trailing_distance_ticks is required for a TrailingStop order.")
         pydantic_request_params["trailing_distance"] = alert.trailing_distance_ticks
@@ -453,10 +467,8 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
         if alert.stop_price is None:
             raise ValueError("stop_price is required for a stop order.")
         pydantic_request_params["stop_price"] = alert.stop_price
-    elif alert.order_type.lower() == "market":
-        pass
-    else:
-        logger.warning(f"Order type '{alert.order_type}' received. If it requires specific parameters not handled, it may fail.")
+    # market type (2) doesn't need extra params here.
+    # Other types like stop-limit (4) would need more handling.
 
     logger.info(f"[Order Attempt] Constructing OrderRequest with: {pydantic_request_params}")
     order_req = OrderRequest(**pydantic_request_params)
@@ -484,7 +496,8 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     if not api_client: raise TopstepAPIError("APIClient not initialized")
 
     # Determine side for closing order
-    close_side = "sell" if current_active_signal == "long" else "buy"
+    close_side_str = "Sell" if current_active_signal == "long" else "Buy"
+    close_side_numeric = 0 if close_side_str == "Buy" else 1 # 0 for Buy, 1 for Sell
 
     if "PROJECTX_CONTRACT_ID" not in strategy_cfg:
          raise ValueError(f"PROJECTX_CONTRACT_ID not found for symbol {strategy_cfg.get('CONTRACT_SYMBOL', 'N/A')}")
@@ -498,8 +511,8 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
         accountId=target_account_id,
         contractId=strategy_cfg["PROJECTX_CONTRACT_ID"],
         qty=strategy_cfg["TRADE_SIZE"], # Assuming full close of original trade size
-        side=close_side,
-        type="market"
+        side=close_side_numeric,
+        type=2  # Market order type code for closing
     )
     log_event(ALERT_LOG_PATH, {"event": "Closing Position Attempt", "strategy": current_strategy_name, "payload": order_req.dict(by_alias=True)})
     try:
@@ -829,14 +842,14 @@ async def post_manual_market_order(params: ManualTradeParams):
 
     logger.info(f"[Manual Trade] Received market order request: {params.dict(by_alias=True)}")
 
-    order_side_for_api = "buy" if params.side.lower() == "long" else "sell"
+    order_side_numeric = 0 if params.side.lower() == "long" else 1 # 0 for Buy, 1 for Sell
 
     order_req = OrderRequest(
         account_id=params.account_id,
         contract_id=params.contract_id,
         qty=params.size,
-        side=order_side_for_api,
-        type="market"
+        side=order_side_numeric,
+        type=2  # Market order type code
     )
 
     try:
@@ -866,14 +879,14 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams):
     if params.trailing_stop_ticks is None or params.trailing_stop_ticks <= 0:
         return {"success": False, "message": "Trailing stop ticks must be a positive integer."}
 
-    order_side_for_api = "buy" if params.side.lower() == "long" else "sell"
+    order_side_numeric = 0 if params.side.lower() == "long" else 1 # 0 for Buy, 1 for Sell
 
     order_req = OrderRequest(
         account_id=params.account_id,
         contract_id=params.contract_id,
         qty=params.size,
-        side=order_side_for_api,
-        type="TrailingStop",
+        side=order_side_numeric,
+        type=5,  # TrailingStop order type code
         trailing_distance=params.trailing_stop_ticks
     )
 
@@ -964,8 +977,8 @@ async def post_manual_flatten_all_trades(params: AccountActionParams):
                     account_id=pos.account_id,
                     contract_id=pos.contract_id,
                     qty=abs(int(pos.quantity)), # Ensure qty is positive integer
-                    side=opposing_side,
-                    type="market"
+                    side=0 if opposing_side == "buy" else 1, # 0 for Buy, 1 for Sell
+                    type=2 # Market order
                 )
                 logger.info(f"[Manual Action] Attempting to flatten position for {pos.contract_id} (Qty: {pos.quantity}, Side: {pos.side}) with order: {order_req.dict(by_alias=True)}")
 
