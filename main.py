@@ -66,9 +66,9 @@ else:
     strategies = {
     "default": {
     "MAX_DAILY_LOSS": -1200,
-    "MAX_DAILY_PROFIT": 2000,
-    "MAX_TRADE_LOSS": -160,
-    "MAX_TRADE_PROFIT": 90,
+    "MAX_DAILY_PROFIT": 10000,
+    "MAX_TRADE_LOSS": -150,
+    "MAX_TRADE_PROFIT": 100,
     "CONTRACT_SYMBOL": "NQ",
     "PROJECTX_CONTRACT_ID": "CON.F.US.ENQ.M25",
     "TRADE_SIZE": 1
@@ -136,7 +136,6 @@ async def start_streams_if_needed():
         except Exception as e:
             logger.error(f"Failed to get accounts to determine ACCOUNT_ID: {e}")
             return
-
 
         contract_id_to_subscribe = active_strategy_config.get("PROJECTX_CONTRACT_ID") or os.getenv("CONTRACT_ID") or "CON.F.US.NQ.M25"
         if contract_id_to_subscribe:
@@ -482,83 +481,91 @@ def log_event(file_path, event_data):
 
 # --- ORDER FUNCTIONS (adapted to use APIClient) ---
 async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
-    if not api_client:
+    global ACCOUNT_ID # Make sure global ACCOUNT_ID is used if alert.account_id is not present
+    if not api_client: 
         raise TopstepAPIError("APIClient not initialized")
-
-    order_account_id = alert.account_id # Use accountId from alert
-    # Ensure alert.ticker is used if PROJECTX_CONTRACT_ID is not in strategy_cfg
-    # Prioritize contract ID from the alert's ticker field
-    order_contract_id = alert.ticker
-    if not order_contract_id:
-        logger.warning(f"No contract_id (ticker) provided in webhook alert for strategy {strategy_cfg.get('CONTRACT_SYMBOL', 'N/A')}. Falling back to strategy config's PROJECTX_CONTRACT_ID.")
-        order_contract_id = strategy_cfg.get("PROJECTX_CONTRACT_ID")
-
-    # Final check if a contract ID could be determined
-    if not order_contract_id:
-        err_msg = "Contract ID is missing: not provided in alert (ticker) and not found in strategy configuration (PROJECTX_CONTRACT_ID)."
-        logger.error(err_msg)
-        raise ValueError(err_msg)
+    
+    order_account_id = alert.account_id if alert.account_id else ACCOUNT_ID
+    if not order_account_id: # Final check if account_id is resolved
+        raise ValueError("Account ID is missing: not globally configured and not in alert.")
+    
+    order_contract_id = alert.ticker or strategy_cfg.get("PROJECTX_CONTRACT_ID")
+    if not order_contract_id: 
+        raise ValueError("Contract ID missing in alert and strategy config.")
 
     order_quantity = alert.quantity if alert.quantity is not None else strategy_cfg.get("TRADE_SIZE", 1)
-    order_side_numeric = 0 if alert.signal.lower() == "long" else 1 # 0 for Buy, 1 for Sell
+    
+    side_str = alert.signal.lower()
+    order_side_enum: OrderSide
+    if side_str == "long" or side_str == "buy":
+        order_side_enum = OrderSide.Bid
+    elif side_str == "short" or side_str == "sell":
+        order_side_enum = OrderSide.Ask
+    else:
+        raise ValueError(f"Invalid signal/side from webhook: {alert.signal}")
 
     order_type_str = alert.order_type.lower()
+    order_type_enum: OrderType
     if order_type_str == "market":
-        order_type_numeric = 2
+        order_type_enum = OrderType.Market
     elif order_type_str == "limit":
-        order_type_numeric = 1
-    elif order_type_str == "stop": # Assuming "stop" is for stop market
-        order_type_numeric = 3
-    elif order_type_str == "trailingstop": # Consistent casing with potential alert values
-        order_type_numeric = 5
+        order_type_enum = OrderType.Limit
+    elif order_type_str == "stop": 
+        order_type_enum = OrderType.Stop 
+    elif order_type_str == "trailingstop":
+        order_type_enum = OrderType.TrailingStop 
     else:
         logger.error(f"Unknown order type from webhook: {alert.order_type}")
         raise ValueError(f"Unknown order type from webhook: {alert.order_type}")
-    
-    # Initialize with common parameters
+
     pydantic_request_params = {
         "account_id": order_account_id,
         "contract_id": order_contract_id,
-        "qty": order_quantity,
-        "side": order_side_numeric,
-        "type": order_type_numeric,
+        "size": order_quantity,  # Corrected from "qty"
+        "side": order_side_enum, 
+        "type": order_type_enum, 
+        "limit_price": alert.limit_price, # Will be None if not provided by alert
+        "stop_price": alert.stop_price    # Will be None if not provided by alert
     }
 
-    # Conditional parameter logic still uses alert.order_type (string) for clarity
-    if alert.order_type.lower() == "limit":
-        if alert.limit_price is None:
+    if order_type_enum == OrderType.Limit:
+        if alert.limit_price is None: # Ensure limit_price is provided for limit orders
             raise ValueError("limit_price is required for a limit order.")
-        pydantic_request_params["limit_price"] = alert.limit_price
-    elif alert.order_type.lower() == "trailingstop": # Check against lowercased string
-        if alert.trailingDistance is None:
-            raise ValueError("trailingDistance is required for a TrailingStop order.")
-        pydantic_request_params["trailingDistance"] = alert.trailingDistance
-    elif alert.order_type.lower() == "stop":
-        if alert.stop_price is None:
+    elif order_type_enum == OrderType.Stop: 
+        if alert.stop_price is None: # Ensure stop_price is provided for stop orders
             raise ValueError("stop_price is required for a stop order.")
-        pydantic_request_params["stop_price"] = alert.stop_price
+    elif order_type_enum == OrderType.TrailingStop:
+        if alert.trailingDistance is None or alert.trailingDistance <= 0: # trailingDistance from SignalAlert model
+            raise ValueError("trailingDistance (as price offset) required and must be positive for TrailingStop.")
+        # Assuming alert.trailingDistance is the direct price offset value the API expects for trail_price.
+        # If conversion (e.g., from ticks to price) is needed, it must happen here.
+        pydantic_request_params["trail_price"] = alert.trailingDistance ,
+        # If trailing from market, stop_price might be explicitly set to None.
+        # If API expects stop_price as a base for TrailingStop, ensure alert.stop_price is used or logic exists.
+        if alert.stop_price is None: # Example: if trailing from market, ensure no old stop_price is carried
+             pydantic_request_params["stop_price"] = None
+    
+    # Clean out any None values from optional parameters before creating the final request model
+    final_params_for_request = {k: v for k, v in pydantic_request_params.items() if v is not None}
 
-    logger.info(f"[Order Attempt] Constructing OrderRequest with: {pydantic_request_params}")
-    order_req = OrderRequest(**pydantic_request_params)
+    logger.info(f"[Order Attempt] Constructing PlaceOrderRequest with: {final_params_for_request}")
+    # OrderRequest is an alias for PlaceOrderRequest in main.py context
+    order_req = OrderRequest(**final_params_for_request) 
 
     try:
-        result_details: PlaceOrderResponse = await api_client.place_order(order_req)
-        if result_details and result_details.success and result_details.order_id is not None:
-            logger.info(f"✅ Order placed successfully via APIClient. Order ID: {result_details.order_id}, Success: {result_details.success}")
-            return {"success": True, "orderId": result_details.order_id, "details": result_details.dict(by_alias=True)}
+        result: PlaceOrderResponse = await api_client.place_order(order_req)
+        if result.success and result.order_id is not None:
+            logger.info(f"✅ Order placed successfully via APIClient. Order ID: {result.order_id}")
+            return {"success": True, "orderId": result.order_id, "details": result.dict(by_alias=True)}
         else:
-            err_msg = result_details.error_message if result_details else "Order placement failed or no order ID returned."
-            logger.error(f"Order placement failed. API Response: {result_details.dict(by_alias=True) if result_details else 'No response object'}")
-            return {"success": False, "errorMessage": err_msg, "details": result_details.dict(by_alias=True) if result_details else None}
-    except OrderPlacementError as ope:
-        logger.error(f"❌ OrderPlacementError: {ope.message} (Status: {ope.status_code}, Response: {ope.response_text})")
-        raise
-    except APIRequestError as are:
-        logger.error(f"❌ APIRequestError during order placement: {are.message} (Status: {are.status_code}, Response: {are.response_text})")
-        raise
-    except Exception as e:
+            err_msg = result.error_message if result else "Order placement failed or no order ID returned."
+            error_code_val = result.error_code.value if result and result.error_code else "N/A"
+            logger.error(f"Order placement failed: {err_msg} (Code: {error_code_val}). API Response: {result.dict(by_alias=True) if result else 'No response object'}")
+            return {"success": False, "errorMessage": err_msg, "details": result.dict(by_alias=True) if result else None}
+    except Exception as e: # Catch any exception from api_client.place_order or Pydantic validation
         logger.error(f"❌ Unexpected exception during order placement: {str(e)}", exc_info=True)
-        raise TopstepAPIError(f"Unexpected error in place_order_projectx: {str(e)}")
+        # Return a structured error that the calling endpoint can process
+        return {"success": False, "errorMessage": str(e), "details": None}
 
 async def close_position_projectx(strategy_cfg: dict, current_active_signal: str, target_account_id: int):
     if not api_client: raise TopstepAPIError("APIClient not initialized")
@@ -930,19 +937,30 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert,
 
 @app.post("/manual/market_order", summary="Place a manual market order")
 async def post_manual_market_order(params: ManualTradeParams, background_tasks: BackgroundTasks):
-    if not api_client:
+    if not api_client: 
         return {"success": False, "message": "APIClient not initialized."}
-
+    
     logger.info(f"[Manual Trade] Received market order request: {params.dict(by_alias=True)}")
 
-    order_side_numeric = 0 if params.side.lower() == "long" else 1 # 0 for Buy, 1 for Sell
+    side_enum: OrderSide
+    if params.side.lower() == "long":
+        side_enum = OrderSide.Bid
+    elif params.side.lower() == "short":
+        side_enum = OrderSide.Ask
+    else:
+        return {"success": False, "message": f"Invalid side parameter: {params.side}. Expected 'long' or 'short'."}
 
+    # OrderRequest is an alias for schemas.PlaceOrderRequest
+    # Corrected:
+    # 1. 'size=params.size' (from 'quantity')
+    # 2. 'side=side_enum' (using the derived enum)
+    # 3. 'type=OrderType.Market.value' (using the enum value)
     order_req = OrderRequest(
         account_id=params.account_id,
         contract_id=params.contract_id,
-        size=params.size,
-        side=order_side_numeric,
-        type=2  # Market order type code
+        size=params.size,  # Corrected
+        side=side_enum,    # Corrected
+        type=OrderType.Market.value  # Corrected
     )
 
     try:
@@ -952,7 +970,6 @@ async def post_manual_market_order(params: ManualTradeParams, background_tasks: 
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_market_order_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
 
-            # Ensure market data stream is active for the traded contract
             background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id)
             logger.info(f"Scheduled MarketDataStream check/start for contract {params.contract_id} in background.")
 
@@ -969,23 +986,30 @@ async def post_manual_market_order(params: ManualTradeParams, background_tasks: 
 
 @app.post("/manual/trailing_stop_order", summary="Place a manual trailing stop order")
 async def post_manual_trailing_stop_order(params: ManualTradeParams, background_tasks: BackgroundTasks):
-    if not api_client:
+    if not api_client: 
         return {"success": False, "message": "APIClient not initialized."}
-
+    
     logger.info(f"[Manual Trade] Received trailing stop order request: {params.dict(by_alias=True)}")
 
-    if params.trailingDistance is None or params.trailingDistance <= 0:
-        return {"success": False, "message": "Trailing stop ticks must be a positive integer."}
+    if params.trailingDistance is None or params.trailingDistance <= 0: # trailing_distance from ManualTradeParams
+        return {"success": False, "message": "Trailing distance must be a positive value for a trailing stop order."}
 
-    order_side_numeric = 0 if params.side.lower() == "long" else 1 # 0 for Buy, 1 for Sell
+    side_enum: OrderSide # Explicitly type hint for clarity
+    if params.side.lower() == "long":
+        side_enum = OrderSide.Bid
+    elif params.side.lower() == "short":
+        side_enum = OrderSide.Ask
+    else:
+        return {"success": False, "message": f"Invalid side parameter: {params.side}. Expected 'long' or 'short'."}
 
-    order_req = OrderRequest(
+    # OrderRequest is an alias for schemas.PlaceOrderRequest
+    order_req = OrderRequest( 
         account_id=params.account_id,
         contract_id=params.contract_id,
-        size=params.size,
-        side=order_side_numeric,
-        type=OrderType.TrailingStop.value,
-        trail_price=params.trailing_distance
+        size=params.size,  # Corrected from quantity
+        side=side_enum,
+        type=OrderType.TrailingStop.value, # Use enum value
+        trail_price=params.trailingDistance # Assuming params.trailingDistance is the price offset
     )
 
     try:
@@ -994,11 +1018,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
             msg = f"Trailing stop order placed successfully. Order ID: {result_details.order_id}, Success: {result_details.success}"
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_trailing_stop_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
-
-            # Ensure market data stream is active for the traded contract
-            background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id)
-            logger.info(f"Scheduled MarketDataStream check/start for contract {params.contract_id} in background.")
-
+            background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id) # Ensure this function exists and is imported if needed
             return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
         else:
             err_msg = result_details.error_message if result_details else "Trailing stop order placement failed or no order ID returned."
