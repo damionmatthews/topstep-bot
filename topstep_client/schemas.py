@@ -56,6 +56,12 @@ class OrderDetails(BaseSchema):
     average_fill_price: Optional[float] = Field(default=None, alias='averageFillPrice')
     # Add other relevant fields
 
+class PlaceOrderResponse(BaseSchema):
+    order_id: int = Field(..., alias="orderId")
+    success: bool
+    error_code: Optional[int] = Field(default=None, alias="errorCode")
+    error_message: Optional[str] = Field(default=None, alias="errorMessage")
+
 class ErrorDetail(BaseSchema):
     error_code: Optional[str] = Field(default=None, alias='errorCode')
     error_message: Optional[str] = Field(default=None, alias='errorMessage')
