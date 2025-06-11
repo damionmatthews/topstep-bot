@@ -16,10 +16,10 @@ class TokenResponse(BaseSchema):
 class Account(BaseSchema):
     id: int
     name: Optional[str] = None
-    user_id: int = Field(..., alias='userId')
+    user_id: Optional[int] = Field(default=None, alias='userId')
     account_type: Optional[str] = Field(default=None, alias='accountType')
     balance: float
-    currency: str
+    currency: Optional[str] = None
     active: Optional[bool] = None
     # Add other relevant fields based on API response
 
