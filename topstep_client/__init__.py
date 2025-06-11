@@ -18,6 +18,7 @@ from .schemas import (
     BaseSchema,
     BarData,
     HistoricalBarsResponse
+    OrderSide,
 )
 from .api_client import APIClient, get_authenticated_client
 
@@ -41,6 +42,7 @@ __all__ = [
     "BaseSchema",
     "BarData",
     "HistoricalBarsResponse",
+    "OrderSide",
 ]
 
 from .streams import StreamConnectionState, MarketDataStream, UserHubStream
