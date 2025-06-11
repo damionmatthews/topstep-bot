@@ -289,6 +289,10 @@ class MarketDataStream(BaseStream):
         else:
             self._logger.info(f"Not subscribed to {contract_id}, no action to unsubscribe.")
 
+    @property
+    def has_active_subscriptions(self) -> bool:
+        return bool(self._subscriptions)
+
 class UserHubStream(BaseStream):
     def __init__(
         self,
