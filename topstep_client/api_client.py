@@ -43,7 +43,7 @@ class APIClient:
         self._session_token_details: Optional[TokenResponse] = None
         if initial_token:
             self._session_token_details = TokenResponse(
-                success=True, token=initial_token, acquired_at=datetime.now(timezone.utc)
+                success=True, token=initial_token, acquired_at=datetime.now(timezone.utc) 
             )
         self._client = httpx_client or httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
         if not self._session_token_details and (not self._username or not self._api_key):
@@ -76,14 +76,14 @@ class APIClient:
         logger.info(f"Attempting authentication to {auth_url} for user {self._username}...")
         try:
             response = await self._client.post(auth_url, json=payload, headers={"Content-Type": "application/json", "Accept": "application/json"})
-            response.raise_for_status()
+            response.raise_for_status() 
             response_json = response.json()
             parsed_token_response = TokenResponse.parse_obj(response_json)
             if not parsed_token_response.success or not parsed_token_response.token:
                 error_msg = parsed_token_response.error_message or "Unknown authentication error"
                 error_code_val = parsed_token_response.error_code.value if parsed_token_response.error_code else "N/A"
                 logger.error(f"Authentication failed via API: {error_msg} (Code: {error_code_val})")
-                self._session_token_details = parsed_token_response
+                self._session_token_details = parsed_token_response 
                 raise AuthenticationError(f"Authentication failed: {error_msg} (Code: {error_code_val})", response_text=response.text)
             self._session_token_details = parsed_token_response
             logger.info(f"Authentication successful for user {self._username}. Token acquired.")
@@ -105,10 +105,10 @@ class APIClient:
             raise TopstepAPIError(f"An unexpected error occurred during authentication: {str(e)}") from e
 
     async def _request(
-        self, method: str, endpoint: str,
-        payload: Optional[Union[Dict[str, Any], BaseModel]] = None,
-        params: Optional[Dict[str, Any]] = None,
-        response_model: Optional[Type[T]] = None,
+        self, method: str, endpoint: str, 
+        payload: Optional[Union[Dict[str, Any], BaseModel]] = None, 
+        params: Optional[Dict[str, Any]] = None, 
+        response_model: Optional[Type[T]] = None, 
         requires_auth: bool = True
     ) -> Union[T, List[T], Dict[str, Any], str]:
         headers = await self._get_headers(requires_auth=requires_auth)
@@ -119,7 +119,7 @@ class APIClient:
             response = await self._client.request(method, url, json=json_payload, params=params, headers=headers)
             response.raise_for_status()
             try: response_data = response.json()
-            except Exception:
+            except Exception: 
                 response_data = response.text
                 if response_model: raise APIResponseParsingError(f"Expected JSON response for {endpoint}, but got text.", raw_response_text=response.text)
                 return response_data # Return raw text if no model was expected (e.g. ping)
@@ -163,12 +163,12 @@ class APIClient:
         if response_wrapper.success and response_wrapper.accounts is not None: return response_wrapper.accounts
         err_code_val = response_wrapper.error_code.value if response_wrapper.error_code else "N/A"
         raise APIRequestError(response_wrapper.error_message or f"Failed to get accounts (Code: {err_code_val})", response_text=str(response_wrapper.dict(by_alias=True)))
-
+        
     async def search_contracts(self, search_text: str, live: bool = False) -> List[ContractModel]:
         payload = {"live": live, "searchText": search_text}
         response_wrapper: SearchContractResponse = await self._request("POST", "/api/Contract/search", payload=payload, response_model=SearchContractResponse)
         if response_wrapper.success and response_wrapper.contracts is not None: return response_wrapper.contracts
-        err_code_val = response_wrapper.error_code.value if response_wrapper.error_code else "N/A"
+        err_code_val = response_wrapper.error_code.value if response_wrapper.error_code else "N/A" 
         raise APIRequestError(response_wrapper.error_message or f"Failed to search contracts (Code: {err_code_val})", response_text=str(response_wrapper.dict(by_alias=True)))
 
     async def place_order(self, order_request: PlaceOrderRequest) -> PlaceOrderResponse:
@@ -186,7 +186,7 @@ class APIClient:
         logger.info(f"Modifying order {order_id} for account {account_id}: {payload.dict(by_alias=True, exclude_none=True)}")
         response: ModifyOrderResponse = await self._request("POST", "/api/Order/modify", payload=payload, response_model=ModifyOrderResponse)
         if not response.success:
-            err_code = response.error_code.value if response.error_code else "N/A"
+            err_code = response.error_code.value if response.error_code else "N/A" 
             logger.error(f"{response.error_message or f'Failed to modify order {order_id} (Code: {err_code})'}. Response: {response.dict(by_alias=True)}")
         return response
 
@@ -195,7 +195,7 @@ class APIClient:
         logger.info(f"Cancelling order {order_id} for account {account_id}")
         response: CancelOrderResponse = await self._request("POST", "/api/Order/cancel", payload=payload, response_model=CancelOrderResponse)
         if not response.success:
-            err_code = response.error_code.value if response.error_code else "N/A"
+            err_code = response.error_code.value if response.error_code else "N/A" 
             logger.error(f"{response.error_message or f'Failed to cancel order {order_id} (Code: {err_code})'}. Response: {response.dict(by_alias=True)}")
         return response
 
@@ -214,7 +214,7 @@ class APIClient:
             logger.warning(f"Order {order_id} not found in the last {search_hours_fallback} hours for account {account_id}.")
             return None
         elif not response_wrapper.success:
-            err_code = response_wrapper.error_code.value if response_wrapper.error_code else "N/A"
+            err_code = response_wrapper.error_code.value if response_wrapper.error_code else "N/A" 
             logger.error(f"Failed to search orders for get_order_details: {response_wrapper.error_message or 'Unknown error'} (Code: {err_code})")
             return None
         return None # Should be unreachable if logic above is correct
@@ -224,16 +224,16 @@ class APIClient:
         payload = RetrieveBarRequest(contractId=contract_id, live=live, startTime=start_time, endTime=end_time, unit=unit, unitNumber=unit_number, limit=limit, includePartialBar=include_partial_bar)
         response: RetrieveBarResponse = await self._request("POST", "/api/History/retrieveBars", payload=payload, response_model=RetrieveBarResponse)
         if not response.success:
-            err_code = response.error_code.value if response.error_code else "N/A"
+            err_code = response.error_code.value if response.error_code else "N/A" 
             logger.error(f"Get historical bars failed: {response.error_message or 'Unknown error'} (Code: {err_code})")
         return response
 
     async def get_open_orders(self, account_id: int) -> List[OrderModel]:
         logger.info(f"Fetching open orders for account ID: {account_id}")
-        payload = {"accountId": account_id}
+        payload = {"accountId": account_id} 
         response_wrapper: SearchOrderResponse = await self._request("POST", "/api/Order/searchOpen", payload=payload, response_model=SearchOrderResponse)
         if response_wrapper.success and response_wrapper.orders is not None: return response_wrapper.orders
-        err_code = response_wrapper.error_code.value if response_wrapper.error_code else "N/A"
+        err_code = response_wrapper.error_code.value if response_wrapper.error_code else "N/A" 
         raise APIRequestError(response_wrapper.error_message or f"Failed to get open orders (Code: {err_code})", response_text=str(response_wrapper.dict(by_alias=True)))
 
     async def get_positions(self, account_id: int) -> List[PositionModel]:
@@ -241,11 +241,10 @@ class APIClient:
         payload = {"accountId": account_id}
         response_wrapper: SearchPositionResponse = await self._request("POST", "/api/Position/searchOpen", payload=payload, response_model=SearchPositionResponse)
         if response_wrapper.success and response_wrapper.positions is not None: return response_wrapper.positions
-        err_code = response_wrapper.error_code.value if response_wrapper.error_code else "N/A"
+        err_code = response_wrapper.error_code.value if response_wrapper.error_code else "N/A" 
         raise APIRequestError(response_wrapper.error_message or f"Failed to get positions (Code: {err_code})", response_text=str(response_wrapper.dict(by_alias=True)))
 
 async def get_authenticated_client(username: Optional[str] = None, api_key: Optional[str] = None) -> APIClient:
     client = APIClient(username=username, api_key=api_key)
     await client.authenticate()
     return client
-```
