@@ -1,0 +1,19 @@
+[
+  {
+    "timestamp": "2025-06-11T03:45:32.616205",
+    "event": "manual_trailing_stop_placed",
+    "params": {
+      "accountId": 8027309,
+      "contractId": "CON.F.US.EP.M25",
+      "side": "long",
+      "size": 1,
+      "trailingStopTicks": 100
+    },
+    "result": {
+      "orderId": 12345,
+      "success": true,
+      "errorCode": null,
+      "errorMessage": null
+    }
+  }
+]
