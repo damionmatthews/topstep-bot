@@ -328,6 +328,17 @@ class StatusResponse(BaseModel):
     current_strategy_name: str
     active_strategy_config: dict
 
+class ManualTradeParams(BaseModel):
+    account_id: int = Field(..., alias="accountId")
+    contract_id: str = Field(..., alias="contractId")
+    side: str  # Expected "long" or "short"
+    size: int
+    trailing_stop_ticks: Optional[int] = Field(default=None, alias="trailingStopTicks")
+    # limit_price: Optional[float] = Field(default=None, alias="limitPrice") # Add if limit orders are also needed from this form
+
+class AccountActionParams(BaseModel):
+    account_id: int = Field(..., alias="accountId")
+
 
 # --- COMMON CSS (omitted for brevity in this diff, assumed unchanged) ---
 COMMON_CSS = """
@@ -810,6 +821,173 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert)
             "event": "Error Processing Webhook", "strategy": strategy_webhook_name, "error": str(e)
         })
         return {"status": "error", "detail": str(e)}
+
+@app.post("/manual/market_order", summary="Place a manual market order")
+async def post_manual_market_order(params: ManualTradeParams):
+    if not api_client:
+        return {"success": False, "message": "APIClient not initialized."}
+
+    logger.info(f"[Manual Trade] Received market order request: {params.dict(by_alias=True)}")
+
+    order_side_for_api = "buy" if params.side.lower() == "long" else "sell"
+
+    order_req = OrderRequest(
+        account_id=params.account_id,
+        contract_id=params.contract_id,
+        qty=params.size,
+        side=order_side_for_api,
+        type="market"
+    )
+
+    try:
+        result_details = await api_client.place_order(order_req)
+        if result_details and result_details.id is not None:
+            msg = f"Market order placed successfully. Order ID: {result_details.id}, Status: {result_details.status}"
+            logger.info(f"[Manual Trade] {msg}")
+            log_event(TRADE_LOG_PATH, {"event": "manual_market_order_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
+            return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
+        else:
+            msg = f"Market order placement failed or no order ID returned. Response: {result_details}"
+            logger.error(f"[Manual Trade] {msg}")
+            log_event(ALERT_LOG_PATH, {"event": "manual_market_order_failed", "params": params.dict(by_alias=True), "error": msg})
+            return {"success": False, "message": msg}
+    except Exception as e:
+        logger.error(f"[Manual Trade] Exception placing market order: {e}", exc_info=True)
+        log_event(ALERT_LOG_PATH, {"event": "manual_market_order_exception", "params": params.dict(by_alias=True), "error": str(e)})
+        return {"success": False, "message": f"An exception occurred: {str(e)}"}
+
+@app.post("/manual/trailing_stop_order", summary="Place a manual trailing stop order")
+async def post_manual_trailing_stop_order(params: ManualTradeParams):
+    if not api_client:
+        return {"success": False, "message": "APIClient not initialized."}
+
+    logger.info(f"[Manual Trade] Received trailing stop order request: {params.dict(by_alias=True)}")
+
+    if params.trailing_stop_ticks is None or params.trailing_stop_ticks <= 0:
+        return {"success": False, "message": "Trailing stop ticks must be a positive integer."}
+
+    order_side_for_api = "buy" if params.side.lower() == "long" else "sell"
+
+    order_req = OrderRequest(
+        account_id=params.account_id,
+        contract_id=params.contract_id,
+        qty=params.size,
+        side=order_side_for_api,
+        type="TrailingStop",
+        trailing_distance=params.trailing_stop_ticks
+    )
+
+    try:
+        result_details = await api_client.place_order(order_req)
+        if result_details and result_details.id is not None:
+            msg = f"Trailing stop order placed successfully. Order ID: {result_details.id}, Status: {result_details.status}"
+            logger.info(f"[Manual Trade] {msg}")
+            log_event(TRADE_LOG_PATH, {"event": "manual_trailing_stop_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
+            return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
+        else:
+            msg = f"Trailing stop order placement failed or no order ID returned. Response: {result_details}"
+            logger.error(f"[Manual Trade] {msg}")
+            log_event(ALERT_LOG_PATH, {"event": "manual_trailing_stop_failed", "params": params.dict(by_alias=True), "error": msg})
+            return {"success": False, "message": msg}
+    except Exception as e:
+        logger.error(f"[Manual Trade] Exception placing trailing stop order: {e}", exc_info=True)
+        log_event(ALERT_LOG_PATH, {"event": "manual_trailing_stop_exception", "params": params.dict(by_alias=True), "error": str(e)})
+        return {"success": False, "message": f"An exception occurred: {str(e)}"}
+
+@app.post("/manual/cancel_all_orders", summary="Cancel all open orders for an account (Simulated)")
+async def post_manual_cancel_all_orders(params: AccountActionParams):
+    if not api_client:
+        return {"success": False, "message": "APIClient not initialized."}
+
+    logger.info(f"[Manual Action] Received Cancel All Orders request for account: {params.account_id}")
+    cancelled_count = 0
+    errors = []
+
+    try:
+        # In a real implementation, get_open_orders would fetch from the API.
+        # Here, it uses the simulated version which currently returns [].
+        open_orders = await api_client.get_open_orders(params.account_id)
+
+        if not open_orders:
+            logger.info(f"[Manual Action] No open orders found to cancel for account {params.account_id} (or simulation returned empty).")
+            return {"success": True, "message": "No open orders found to cancel (or simulation returned empty).", "cancelled_count": 0, "errors": []}
+
+        for order in open_orders:
+            try:
+                # The api_client.cancel_order expects order_id and account_id.
+                # OpenOrderSchema has id and accountId.
+                success = await api_client.cancel_order(order_id=order.id, account_id=order.account_id)
+                if success:
+                    logger.info(f"[Manual Action] Order {order.id} for account {order.account_id} cancelled successfully.")
+                    cancelled_count += 1
+                else:
+                    logger.warning(f"[Manual Action] Failed to cancel order {order.id} for account {order.account_id}.")
+                    errors.append(f"Failed to cancel order {order.id}")
+            except Exception as e_cancel:
+                logger.error(f"[Manual Action] Exception cancelling order {order.id}: {e_cancel}", exc_info=True)
+                errors.append(f"Exception cancelling order {order.id}: {str(e_cancel)}")
+
+        msg = f"Cancel All Orders for account {params.account_id} processed. Cancelled: {cancelled_count}. Errors: {len(errors)}."
+        log_event(ALERT_LOG_PATH, {"event": "manual_cancel_all_processed", "params": params.dict(by_alias=True), "cancelled_count": cancelled_count, "errors": errors})
+        return {"success": True, "message": msg, "cancelled_count": cancelled_count, "errors": errors}
+
+    except Exception as e:
+        logger.error(f"[Manual Action] Exception in Cancel All Orders for account {params.account_id}: {e}", exc_info=True)
+        log_event(ALERT_LOG_PATH, {"event": "manual_cancel_all_exception", "params": params.dict(by_alias=True), "error": str(e)})
+        return {"success": False, "message": f"An exception occurred: {str(e)}"}
+
+@app.post("/manual/flatten_all_trades", summary="Flatten all open positions for an account (Simulated)")
+async def post_manual_flatten_all_trades(params: AccountActionParams):
+    if not api_client:
+        return {"success": False, "message": "APIClient not initialized."}
+
+    logger.info(f"[Manual Action] Received Flatten All Trades request for account: {params.account_id}")
+    flattened_count = 0
+    errors = []
+
+    try:
+        # In a real implementation, get_positions would fetch from the API.
+        # Here, it uses the simulated version which currently returns [].
+        positions = await api_client.get_positions(params.account_id)
+
+        if not positions:
+            logger.info(f"[Manual Action] No open positions found to flatten for account {params.account_id} (or simulation returned empty).")
+            return {"success": True, "message": "No open positions found to flatten (or simulation returned empty).", "flattened_count": 0, "errors": []}
+
+        for pos in positions:
+            try:
+                # Determine opposing side
+                opposing_side = "sell" if pos.side.lower() in ["long", "buy"] else "buy"
+
+                # Create a market order to close the position
+                order_req = OrderRequest(
+                    account_id=pos.account_id,
+                    contract_id=pos.contract_id,
+                    qty=abs(int(pos.quantity)), # Ensure qty is positive integer
+                    side=opposing_side,
+                    type="market"
+                )
+                logger.info(f"[Manual Action] Attempting to flatten position for {pos.contract_id} (Qty: {pos.quantity}, Side: {pos.side}) with order: {order_req.dict(by_alias=True)}")
+
+                result_details = await api_client.place_order(order_req)
+                if result_details and result_details.id is not None:
+                    logger.info(f"[Manual Action] Flatten order for {pos.contract_id} placed. Order ID: {result_details.id}, Status: {result_details.status}")
+                    flattened_count += 1
+                else:
+                    logger.warning(f"[Manual Action] Failed to place flatten order for {pos.contract_id}. Response: {result_details}")
+                    errors.append(f"Failed to place flatten order for {pos.contract_id}")
+            except Exception as e_flatten:
+                logger.error(f"[Manual Action] Exception flattening position for {pos.contract_id}: {e_flatten}", exc_info=True)
+                errors.append(f"Exception flattening {pos.contract_id}: {str(e_flatten)}")
+
+        msg = f"Flatten All Trades for account {params.account_id} processed. Flatten orders placed: {flattened_count}. Errors: {len(errors)}."
+        log_event(ALERT_LOG_PATH, {"event": "manual_flatten_all_processed", "params": params.dict(by_alias=True), "flattened_count": flattened_count, "errors": errors})
+        return {"success": True, "message": msg, "flattened_count": flattened_count, "errors": errors}
+
+    except Exception as e:
+        logger.error(f"[Manual Action] Exception in Flatten All Trades for account {params.account_id}: {e}", exc_info=True)
+        log_event(ALERT_LOG_PATH, {"event": "manual_flatten_all_exception", "params": params.dict(by_alias=True), "error": str(e)})
+        return {"success": False, "message": f"An exception occurred: {str(e)}"}
         
 # Removed save_trade_states as trade_states is in-memory; persistence would need more robust handling
 
@@ -1131,6 +1309,169 @@ async def clone_strategy_action_endpoint(strategy_to_clone: str):
         current_strategy_name = new_name
         return RedirectResponse(url=f"/?strategy_selected={current_strategy_name}", status_code=303)
     return RedirectResponse(url="/", status_code=303)
+
+@app.get("/manual_trade", response_class=HTMLResponse)
+async def manual_trade_page():
+    # COMMON_CSS should be defined globally in main.py already
+    html_content = f"""
+    <html>
+    <head>
+        <title>Manual Trade Entry</title>
+        {COMMON_CSS}
+        <style>
+            .form-grid {{
+                display: grid;
+                grid-template-columns: auto 1fr;
+                gap: 10px 20px;
+                align-items: center;
+            }}
+            .form-grid label {{
+                text-align: right;
+            }}
+            .button-group button {{
+                margin-right: 10px;
+                margin-bottom: 10px; /* For wrapping */
+            }}
+            #manual_trade_response {{
+                margin-top: 20px;
+                padding: 10px;
+                border: 1px solid #434651;
+                border-radius: 4px;
+                background-color: #2A2E39;
+                white-space: pre-wrap; /* To respect newlines in the response */
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Manual Trade Entry</h1>
+            <p><a href="/dashboard_menu_page" class="button-link">Back to Menu</a></p>
+
+            <form id="manual_trade_form">
+                <div class="form-grid">
+                    <label for="accountId">Account ID:</label>
+                    <input type="number" id="accountId" name="accountId" required>
+
+                    <label for="contractId">Contract ID:</label>
+                    <input type="text" id="contractId" name="contractId" required placeholder="e.g., CON.F.US.ENQ.M25">
+
+                    <label for="side">Side:</label>
+                    <select id="side" name="side">
+                        <option value="long">Long</option>
+                        <option value="short">Short</option>
+                    </select>
+
+                    <label for="size">Size (Contracts):</label>
+                    <input type="number" id="size" name="size" min="1" value="1" required>
+
+                    <label for="trailingStopTicks">Trailing Stop (Ticks, for Trailing Stop Order):</label>
+                    <input type="number" id="trailingStopTicks" name="trailingStopTicks" min="0">
+                </div>
+            </form>
+
+            <div class="button-group" style="margin-top: 20px;">
+                <button type="button" onclick="submitManualOrder('market')">Place Market Order</button>
+                <button type="button" onclick="submitManualOrder('trailing_stop')">Place Trailing Stop Order</button>
+                <button type="button" onclick="submitAccountAction('cancel_all')">Cancel All Orders (Account)</button>
+                <button type="button" onclick="submitAccountAction('flatten_all')">Flatten All Trades (Account)</button>
+            </div>
+
+            <h2>Response:</h2>
+            <pre id="manual_trade_response">No action taken yet.</pre>
+        </div>
+
+        <script>
+            async function submitManualOrder(orderType) {{
+                const form = document.getElementById('manual_trade_form');
+                const responseArea = document.getElementById('manual_trade_response');
+
+                const formData = {{
+                    accountId: parseInt(form.elements.accountId.value),
+                    contractId: form.elements.contractId.value,
+                    side: form.elements.side.value,
+                    size: parseInt(form.elements.size.value),
+                    trailingStopTicks: form.elements.trailingStopTicks.value ? parseInt(form.elements.trailingStopTicks.value) : null
+                }};
+
+                if (!formData.accountId || !formData.contractId || !formData.side || !formData.size) {{
+                    responseArea.textContent = "Error: Account ID, Contract ID, Side, and Size are required.";
+                    return;
+                }}
+                if (orderType === 'trailing_stop' && (!formData.trailingStopTicks || formData.trailingStopTicks <= 0)) {{
+                    responseArea.textContent = "Error: Trailing Stop Ticks must be a positive number for a trailing stop order.";
+                    return;
+                }}
+
+                let endpoint = '';
+                if (orderType === 'market') {{
+                    endpoint = '/manual/market_order';
+                }} else if (orderType === 'trailing_stop') {{
+                    endpoint = '/manual/trailing_stop_order';
+                }} else {{
+                    responseArea.textContent = 'Error: Unknown order type.';
+                    return;
+                }}
+
+                responseArea.textContent = 'Submitting ' + orderType + ' order...';
+
+                try {{
+                    const response = await fetch(endpoint, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(formData)
+                    }});
+                    const result = await response.json();
+                    responseArea.textContent = JSON.stringify(result, null, 2);
+                }} catch (error) {{
+                    console.error('Error submitting manual order:', error);
+                    responseArea.textContent = 'Error: ' + error.message;
+                }}
+            }}
+
+            async function submitAccountAction(actionType) {{
+                const form = document.getElementById('manual_trade_form'); // Get accountId from the main form
+                const responseArea = document.getElementById('manual_trade_response');
+
+                const accountIdValue = form.elements.accountId.value;
+                if (!accountIdValue) {{
+                    responseArea.textContent = "Error: Account ID is required for this action.";
+                    return;
+                }}
+                const accountData = {{ accountId: parseInt(accountIdValue) }};
+
+                let endpoint = '';
+                let actionName = '';
+                if (actionType === 'cancel_all') {{
+                    endpoint = '/manual/cancel_all_orders';
+                    actionName = 'Cancel All Orders';
+                }} else if (actionType === 'flatten_all') {{
+                    endpoint = '/manual/flatten_all_trades';
+                    actionName = 'Flatten All Trades';
+                }} else {{
+                    responseArea.textContent = 'Error: Unknown account action.';
+                    return;
+                }}
+
+                responseArea.textContent = 'Submitting ' + actionName + ' for account ' + accountData.accountId + '...';
+
+                try {{
+                    const response = await fetch(endpoint, {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(accountData)
+                    }});
+                    const result = await response.json();
+                    responseArea.textContent = JSON.stringify(result, null, 2);
+                }} catch (error) {{
+                    console.error('Error submitting account action:', error);
+                    responseArea.textContent = 'Error: ' + error.message;
+                }}
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
     
 @app.get("/dashboard_menu_page", response_class=HTMLResponse)
 async def dashboard_menu_html_page():
@@ -1147,6 +1488,7 @@ async def dashboard_menu_html_page():
             <li><a href="/toggle_trading_status">Toggle Trading (View Status)</a></li>
             <li><a href="/debug_account_info">Debug Account Info</a></li>
             <li><a href="/live_feed">Live Market Feed</a></li>
+            <li><a href="/manual_trade">Manual Trade Entry</a></li>
         </ul>
     </div></body></html>""")
 
