@@ -1,6 +1,6 @@
-from pydantic import BaseModel, Field, field_validator # Removed HttpUrl as it's not used
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 from typing import Optional, List, Union, Any
-from datetime import datetime, timezone # Added timezone
+from datetime import datetime
 from enum import IntEnum
 
 class BaseSchema(BaseModel):
@@ -75,61 +75,19 @@ class PlaceOrderErrorCode(IntEnum):
     ContractNotActive = 9
     AccountRejected = 10
 
-# Specific error code enums for other responses based on Swagger structure
-class SearchContractErrorCode(IntEnum):
-    Success = 0
-    # Add other specific codes if the API defines them
-
-class SearchOrderErrorCode(IntEnum):
-    Success = 0
-    AccountNotFound = 1
-    # Add other specific codes
-
-class ModifyOrderErrorCode(IntEnum):
-    Success = 0
-    AccountNotFound = 1
-    OrderNotFound = 2
-    Rejected = 3
-    Pending = 4
-    UnknownError = 5
-    AccountRejected = 6
-    ContractNotFound = 7
-    # Add other specific codes
-
-class CancelOrderErrorCode(IntEnum):
-    Success = 0
-    AccountNotFound = 1
-    OrderNotFound = 2
-    Rejected = 3
-    Pending = 4
-    UnknownError = 5
-    AccountRejected = 6
-    # Add other specific codes
-
-class SearchPositionErrorCode(IntEnum):
-    Success = 0
-    AccountNotFound = 1
-    # Add other specific codes
-
-class RetrieveBarErrorCode(IntEnum):
-    Success = 0
-    ContractNotFound = 1
-    # Add other specific codes
-
-
 class TokenResponse(BaseSchema):
     success: bool
     error_code: Optional[LoginErrorCode] = Field(default=None, alias='errorCode')
     error_message: Optional[str] = Field(default=None, alias='errorMessage')
     token: Optional[str] = None
-    acquired_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # Ensure timezone aware
+    acquired_at: datetime = Field(default_factory=datetime.utcnow) # Changed Optional[datetime] to datetime
 
     @field_validator('error_code', mode='before')
     @classmethod
-    def _validate_login_error_code(cls, v):
-        if v is None: return v
-        try: return LoginErrorCode(v)
-        except ValueError: return None # Or raise, or keep original if unknown
+    def _validate_error_code(cls, v):
+        if v is None:
+            return v
+        return LoginErrorCode(v)
 
 class TradingAccountModel(BaseSchema):
     id: int
@@ -147,7 +105,7 @@ class SearchAccountResponse(BaseSchema):
 
     @field_validator('error_code', mode='before')
     @classmethod
-    def _validate_search_account_error_code(cls, v):
+    def _validate_sarc(cls, v):
         return SearchAccountErrorCode(v)
 
 class ContractModel(BaseSchema):
@@ -160,25 +118,20 @@ class ContractModel(BaseSchema):
 
 class SearchContractResponse(BaseSchema):
     success: bool
-    error_code: SearchContractErrorCode = Field(..., alias='errorCode') 
+    # Assuming 0 for success as per Swagger, though SearchContractErrorCode enum is defined with only Success = 0
+    error_code: int = Field(..., alias='errorCode') # Could use Literal[0] or a specific enum if more codes exist
     error_message: Optional[str] = Field(default=None)
     contracts: Optional[List[ContractModel]] = Field(default_factory=list)
 
-    @field_validator('error_code', mode='before')
-    @classmethod
-    def _validate_search_contract_error_code(cls, v):
-        return SearchContractErrorCode(v)
-
-
 class PlaceOrderRequest(BaseSchema):
     account_id: int = Field(..., alias='accountId')
-    contract_id: str = Field(..., alias='contractId')
-    type: int # <--- Changed to int
-    side: int # <--- Changed to int
-    size: int
+    symbol_id: str = Field(..., alias='symbolId')
+    type: OrderType
+    side: OrderSide
+    position_size: int = Field(..., alias='positionSize')
     limit_price: Optional[float] = Field(default=None, alias='limitPrice')
     stop_price: Optional[float] = Field(default=None, alias='stopPrice')
-    trail_price: Optional[float] = Field(default=None, alias='trailPrice')
+    trail_distance: Optional[float] = Field(default=None, alias='trailDistance')
     custom_tag: Optional[str] = Field(default=None, alias='customTag')
     linked_order_id: Optional[int] = Field(default=None, alias='linkedOrderId')
 
@@ -196,21 +149,11 @@ class OrderModel(BaseSchema):
     stop_price: Optional[float] = Field(default=None, alias='stopPrice')
     fill_volume: int = Field(..., alias='fillVolume')
 
-class SearchOrderRequest(BaseSchema): # Added this schema
-    account_id: int = Field(..., alias="accountId")
-    start_timestamp: datetime = Field(..., alias="startTimestamp")
-    end_timestamp: datetime = Field(..., alias="endTimestamp")
-
 class SearchOrderResponse(BaseSchema):
     success: bool
-    error_code: SearchOrderErrorCode = Field(..., alias="errorCode") 
+    error_code: int = Field(..., alias="errorCode") # Define specific enum: SearchOrderErrorCode
     error_message: Optional[str] = None
     orders: List[OrderModel] = Field(default_factory=list)
-
-    @field_validator('error_code', mode='before')
-    @classmethod
-    def _validate_search_order_error_code(cls, v):
-        return SearchOrderErrorCode(v)
 
 class PlaceOrderResponse(BaseSchema):
     success: bool
@@ -220,11 +163,10 @@ class PlaceOrderResponse(BaseSchema):
 
     @field_validator('error_code', mode='before')
     @classmethod
-    def _validate_place_order_error_code(cls, v):
-        if v is None: return v
-        try: return PlaceOrderErrorCode(v)
-        except ValueError: return None
-
+    def _validate_poec(cls, v):
+        if v is None:
+            return v
+        return PlaceOrderErrorCode(v)
 
 class ModifyOrderRequest(BaseSchema):
     account_id: int = Field(..., alias='accountId')
@@ -236,14 +178,8 @@ class ModifyOrderRequest(BaseSchema):
 
 class ModifyOrderResponse(BaseSchema):
     success: bool
-    error_code: ModifyOrderErrorCode = Field(..., alias="errorCode") 
+    error_code: int = Field(..., alias="errorCode") # Define specific enum: ModifyOrderErrorCode
     error_message: Optional[str] = None
-
-    @field_validator('error_code', mode='before')
-    @classmethod
-    def _validate_modify_order_error_code(cls, v):
-        return ModifyOrderErrorCode(v)
-
 
 class CancelOrderRequest(BaseSchema):
     account_id: int = Field(..., alias='accountId')
@@ -251,14 +187,8 @@ class CancelOrderRequest(BaseSchema):
 
 class CancelOrderResponse(BaseSchema):
     success: bool
-    error_code: CancelOrderErrorCode = Field(..., alias="errorCode") 
+    error_code: int = Field(..., alias="errorCode") # Define specific enum: CancelOrderErrorCode
     error_message: Optional[str] = None
-
-    @field_validator('error_code', mode='before')
-    @classmethod
-    def _validate_cancel_order_error_code(cls, v):
-        return CancelOrderErrorCode(v)
-
 
 class PositionModel(BaseSchema):
     id: int
@@ -271,15 +201,9 @@ class PositionModel(BaseSchema):
 
 class SearchPositionResponse(BaseSchema):
     success: bool
-    error_code: SearchPositionErrorCode = Field(..., alias="errorCode") 
+    error_code: int = Field(..., alias="errorCode") # Define specific enum: SearchPositionErrorCode
     error_message: Optional[str] = None
     positions: List[PositionModel] = Field(default_factory=list)
-
-    @field_validator('error_code', mode='before')
-    @classmethod
-    def _validate_search_pos_error_code(cls, v):
-        return SearchPositionErrorCode(v)
-
 
 class AggregateBarModel(BaseSchema):
     t: datetime
@@ -301,34 +225,28 @@ class RetrieveBarRequest(BaseSchema):
 
 class RetrieveBarResponse(BaseSchema):
     success: bool
-    error_code: RetrieveBarErrorCode = Field(..., alias="errorCode") 
+    error_code: int = Field(..., alias="errorCode") # Define specific enum: RetrieveBarErrorCode
     error_message: Optional[str] = None
     bars: List[AggregateBarModel] = Field(default_factory=list)
 
-    @field_validator('error_code', mode='before')
-    @classmethod
-    def _validate_retrieve_bar_error_code(cls, v):
-        return RetrieveBarErrorCode(v)
-
-
-class ErrorDetail(BaseSchema): # Kept for generic error use if needed
-    error_code: Optional[str] = Field(default=None, alias='errorCode') 
+class ErrorDetail(BaseSchema):
+    error_code: Optional[str] = Field(default=None, alias='errorCode')
     error_message: Optional[str] = Field(default=None, alias='errorMessage')
     details: Optional[Any] = None
 
-class APIResponse(BaseSchema): # Generic wrapper
+class APIResponse(BaseSchema):
     success: bool
     data: Optional[Any] = None
     error: Optional[ErrorDetail] = None
 
-class OpenOrderSchema(OrderModel): # Inherits all fields from OrderModel
+class OpenOrderSchema(OrderModel):
     pass
 
-# For backwards compatibility during transition - eventually remove these aliases
+# For backwards compatibility during transition - eventually remove these
 Account = TradingAccountModel
 Contract = ContractModel
-OrderRequest = PlaceOrderRequest # This was a major rename
-OrderDetails = OrderModel       # This was a major rename
+OrderRequest = PlaceOrderRequest
+OrderDetails = OrderModel
 BarData = AggregateBarModel
-HistoricalBarsResponse = RetrieveBarResponse # This was a major structural change in client
+HistoricalBarsResponse = RetrieveBarResponse
 PositionSchema = PositionModel
