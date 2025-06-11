@@ -514,7 +514,7 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
     else:
         logger.error(f"Unknown order type from webhook: {alert.order_type}")
         raise ValueError(f"Unknown order type from webhook: {alert.order_type}")
-
+    
     # Initialize with common parameters
     pydantic_request_params = {
         "account_id": order_account_id,
@@ -984,8 +984,8 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
         contract_id=params.contract_id,
         size=params.size,
         side=order_side_numeric,
-        type=OrderType.TrailingStop.value,  # TrailingStop order type code
-        trailingDistance=params.trailingDistance
+        type=OrderType.TrailingStop.value,
+        trail_price=params.trailing_distance
     )
 
     try:
