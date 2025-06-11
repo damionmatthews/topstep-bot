@@ -173,8 +173,8 @@ class SearchContractResponse(BaseSchema):
 class PlaceOrderRequest(BaseSchema):
     account_id: int = Field(..., alias='accountId')
     contract_id: str = Field(..., alias='contractId')
-    type: OrderType
-    side: OrderSide
+    type: int # <--- Changed to int
+    side: int # <--- Changed to int
     size: int
     limit_price: Optional[float] = Field(default=None, alias='limitPrice')
     stop_price: Optional[float] = Field(default=None, alias='stopPrice')
