@@ -983,7 +983,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
     
     logger.info(f"[Manual Trade] Received trailing stop order request: {params.dict(by_alias=True)}")
 
-    if params.trailing_distance is None or params.trailing_distance <= 0:
+    if params.trailingDistance is None or params.trailingDistance <= 0:
         return {"success": False, "message": "Trailing distance must be a positive value for a trailing stop order."}
 
     order_side_int: int
@@ -1000,7 +1000,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
         size=params.size,
         side=order_side_int, # Use integer
         type=OrderType.TrailingStop.value, # Use integer
-        trail_price=params.trailing_distance 
+        trail_price=params.trailingDistance 
     )
 
     try:
