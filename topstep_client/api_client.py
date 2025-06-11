@@ -12,6 +12,7 @@ from .schemas import (
     Contract,
     OrderRequest,
     OrderDetails,
+    PlaceOrderResponse,
     APIResponse,
     ErrorDetail,
     BaseSchema,
@@ -235,9 +236,9 @@ class APIClient:
         except ValidationError as e:
             raise APIResponseParsingError("Failed to parse contract data.", raw_response_text=str(contracts_list_raw), original_exception=e) from e
 
-    async def place_order(self, order_request: OrderRequest) -> OrderDetails:
-        response_data = await self._request("POST", "/api/Order/place", payload=order_request, response_model=OrderDetails)
-        # The _request method with response_model=OrderDetails should handle parsing.
+    async def place_order(self, order_request: OrderRequest) -> PlaceOrderResponse:
+        response_data = await self._request("POST", "/api/Order/place", payload=order_request, response_model=PlaceOrderResponse)
+        # The _request method with response_model=PlaceOrderResponse should handle parsing.
         # However, the actual API response for order placement needs to be confirmed.
         # If it returns something like {"success": true, "orderId": 123, ...},
         # then OrderDetails model needs to match that, or response_data needs pre-processing here.

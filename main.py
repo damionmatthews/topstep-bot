@@ -19,7 +19,8 @@ from topstep_client import (
     Account,
     Contract,
     OrderRequest,
-    OrderDetails
+    OrderDetails,
+    PlaceOrderResponse
 )
 
 import httpx # Kept for now, though direct usage should be minimized
@@ -543,14 +544,15 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
     order_req = OrderRequest(**pydantic_request_params)
 
     try:
-        result_details = await api_client.place_order(order_req)
+        result_details: PlaceOrderResponse = await api_client.place_order(order_req)
         # Ensure result_details itself is not None before accessing attributes
-        if result_details and hasattr(result_details, 'id') and result_details.id is not None:
-            logger.info(f"✅ Order placed successfully via APIClient. Order ID: {result_details.id}, Status: {result_details.status}")
-            return {"success": True, "orderId": result_details.id, "status": result_details.status, "details": result_details.dict()}
+        if result_details and result_details.success and result_details.order_id is not None:
+            logger.info(f"✅ Order placed successfully via APIClient. Order ID: {result_details.order_id}, Success: {result_details.success}")
+            return {"success": True, "orderId": result_details.order_id, "details": result_details.dict(by_alias=True)}
         else:
-            logger.error(f"Order placement failed or id missing in APIClient response. Response: {result_details}")
-            return {"success": False, "errorMessage": "Order placement failed via APIClient or no order ID returned."}
+            err_msg = result_details.error_message if result_details else "Order placement failed or no order ID returned."
+            logger.error(f"Order placement failed. API Response: {result_details.dict(by_alias=True) if result_details else 'No response object'}")
+            return {"success": False, "errorMessage": err_msg, "details": result_details.dict(by_alias=True) if result_details else None}
     except OrderPlacementError as ope:
         logger.error(f"❌ OrderPlacementError: {ope.message} (Status: {ope.status_code}, Response: {ope.response_text})")
         raise
@@ -585,13 +587,14 @@ async def close_position_projectx(strategy_cfg: dict, current_active_signal: str
     )
     log_event(ALERT_LOG_PATH, {"event": "Closing Position Attempt", "strategy": current_strategy_name, "payload": order_req.dict(by_alias=True)})
     try:
-        response = await api_client.place_order(order_req)
-        if response and response.id is not None:
-            logger.info(f"Close position order placed: {response.id}")
-            return {"success": True, "orderId": response.id}
+        response: PlaceOrderResponse = await api_client.place_order(order_req)
+        if response and response.success and response.order_id is not None:
+            logger.info(f"Close position order placed: {response.order_id}, Success: {response.success}")
+            return {"success": True, "orderId": response.order_id}
         else:
-            logger.error(f"❌ Close position order seemed to succeed but no valid OrderDetails.id received. Response: {response}")
-            return {"success": False, "errorMessage": "Close position order failed to return valid order details."}
+            err_msg = response.error_message if response else "Close position order failed to return valid order details."
+            logger.error(f"❌ Close position order failed. API Response: {response.dict(by_alias=True) if response else 'No response object'}")
+            return {"success": False, "errorMessage": err_msg, "details": response.dict(by_alias=True) if response else None}
     except APIRequestError as e:
         logger.error(f"Failed to close position via API: {e.message if hasattr(e, 'message') else e}")
         return {"success": False, "errorMessage": str(e.message if hasattr(e, 'message') else e)}
@@ -885,10 +888,10 @@ async def receive_alert_strategy(strategy_webhook_name: str, alert: SignalAlert,
             # Entry price is initially None; UserHubStream callback (handle_user_trade) will update it on fill
             state["current_trade"] = Trade(
                 strategy_name=strategy_webhook_name,
-                order_id=order_id,
+                order_id=order_id, # This is result.orderId from PlaceOrderResponse now
                 direction=signal_dir,
                 account_id=alert.account_id,
-                contract_id=result.get("details", {}).get("contractId", "UNKNOWN_CONTRACT"), # Get contract_id from order result
+                contract_id=order_req.contract_id, # Use contract_id from the original order_req
                 entry_price=None,
                 size=strategy_cfg.get("TRADE_SIZE", 1)
             )
@@ -946,9 +949,9 @@ async def post_manual_market_order(params: ManualTradeParams, background_tasks: 
     )
 
     try:
-        result_details = await api_client.place_order(order_req)
-        if result_details and result_details.id is not None:
-            msg = f"Market order placed successfully. Order ID: {result_details.id}, Status: {result_details.status}"
+        result_details: PlaceOrderResponse = await api_client.place_order(order_req)
+        if result_details and result_details.success and result_details.order_id is not None:
+            msg = f"Market order placed successfully. Order ID: {result_details.order_id}, Success: {result_details.success}"
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_market_order_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
 
@@ -958,10 +961,10 @@ async def post_manual_market_order(params: ManualTradeParams, background_tasks: 
 
             return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
         else:
-            msg = f"Market order placement failed or no order ID returned. Response: {result_details}"
-            logger.error(f"[Manual Trade] {msg}")
-            log_event(ALERT_LOG_PATH, {"event": "manual_market_order_failed", "params": params.dict(by_alias=True), "error": msg})
-            return {"success": False, "message": msg}
+            err_msg = result_details.error_message if result_details else "Market order placement failed or no order ID returned."
+            logger.error(f"[Manual Trade] {err_msg}. API Response: {result_details.dict(by_alias=True) if result_details else 'No response object'}")
+            log_event(ALERT_LOG_PATH, {"event": "manual_market_order_failed", "params": params.dict(by_alias=True), "error": err_msg, "details": result_details.dict(by_alias=True) if result_details else None})
+            return {"success": False, "message": err_msg, "details": result_details.dict(by_alias=True) if result_details else None}
     except Exception as e:
         logger.error(f"[Manual Trade] Exception placing market order: {e}", exc_info=True)
         log_event(ALERT_LOG_PATH, {"event": "manual_market_order_exception", "params": params.dict(by_alias=True), "error": str(e)})
@@ -989,9 +992,9 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
     )
 
     try:
-        result_details = await api_client.place_order(order_req)
-        if result_details and result_details.id is not None:
-            msg = f"Trailing stop order placed successfully. Order ID: {result_details.id}, Status: {result_details.status}"
+        result_details: PlaceOrderResponse = await api_client.place_order(order_req)
+        if result_details and result_details.success and result_details.order_id is not None:
+            msg = f"Trailing stop order placed successfully. Order ID: {result_details.order_id}, Success: {result_details.success}"
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_trailing_stop_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
 
@@ -1001,10 +1004,10 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
 
             return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
         else:
-            msg = f"Trailing stop order placement failed or no order ID returned. Response: {result_details}"
-            logger.error(f"[Manual Trade] {msg}")
-            log_event(ALERT_LOG_PATH, {"event": "manual_trailing_stop_failed", "params": params.dict(by_alias=True), "error": msg})
-            return {"success": False, "message": msg}
+            err_msg = result_details.error_message if result_details else "Trailing stop order placement failed or no order ID returned."
+            logger.error(f"[Manual Trade] {err_msg}. API Response: {result_details.dict(by_alias=True) if result_details else 'No response object'}")
+            log_event(ALERT_LOG_PATH, {"event": "manual_trailing_stop_failed", "params": params.dict(by_alias=True), "error": err_msg, "details": result_details.dict(by_alias=True) if result_details else None})
+            return {"success": False, "message": err_msg, "details": result_details.dict(by_alias=True) if result_details else None}
     except Exception as e:
         logger.error(f"[Manual Trade] Exception placing trailing stop order: {e}", exc_info=True)
         log_event(ALERT_LOG_PATH, {"event": "manual_trailing_stop_exception", "params": params.dict(by_alias=True), "error": str(e)})
@@ -1085,13 +1088,14 @@ async def post_manual_flatten_all_trades(params: AccountActionParams):
                 )
                 logger.info(f"[Manual Action] Attempting to flatten position for {pos.contract_id} (Qty: {pos.quantity}, Side: {pos.side}) with order: {order_req.dict(by_alias=True)}")
 
-                result_details = await api_client.place_order(order_req)
-                if result_details and result_details.id is not None:
-                    logger.info(f"[Manual Action] Flatten order for {pos.contract_id} placed. Order ID: {result_details.id}, Status: {result_details.status}")
+                result_details: PlaceOrderResponse = await api_client.place_order(order_req)
+                if result_details and result_details.success and result_details.order_id is not None:
+                    logger.info(f"[Manual Action] Flatten order for {pos.contract_id} placed. Order ID: {result_details.order_id}, Success: {result_details.success}")
                     flattened_count += 1
                 else:
-                    logger.warning(f"[Manual Action] Failed to place flatten order for {pos.contract_id}. Response: {result_details}")
-                    errors.append(f"Failed to place flatten order for {pos.contract_id}")
+                    err_msg = result_details.error_message if result_details else f"Failed to place flatten order for {pos.contract_id}."
+                    logger.warning(f"[Manual Action] {err_msg}. API Response: {result_details.dict(by_alias=True) if result_details else 'No response object'}")
+                    errors.append(err_msg)
             except Exception as e_flatten:
                 logger.error(f"[Manual Action] Exception flattening position for {pos.contract_id}: {e_flatten}", exc_info=True)
                 errors.append(f"Exception flattening {pos.contract_id}: {str(e_flatten)}")
