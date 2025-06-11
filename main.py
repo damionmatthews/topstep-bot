@@ -66,9 +66,9 @@ else:
     strategies = {
     "default": {
     "MAX_DAILY_LOSS": -1200,
-    "MAX_DAILY_PROFIT": 10000,
-    "MAX_TRADE_LOSS": -150,
-    "MAX_TRADE_PROFIT": 100,
+    "MAX_DAILY_PROFIT": 2000,
+    "MAX_TRADE_LOSS": -160,
+    "MAX_TRADE_PROFIT": 90,
     "CONTRACT_SYMBOL": "NQ",
     "PROJECTX_CONTRACT_ID": "CON.F.US.ENQ.M25",
     "TRADE_SIZE": 1
@@ -136,6 +136,7 @@ async def start_streams_if_needed():
         except Exception as e:
             logger.error(f"Failed to get accounts to determine ACCOUNT_ID: {e}")
             return
+
 
         contract_id_to_subscribe = active_strategy_config.get("PROJECTX_CONTRACT_ID") or os.getenv("CONTRACT_ID") or "CON.F.US.NQ.M25"
         if contract_id_to_subscribe:
@@ -481,12 +482,12 @@ def log_event(file_path, event_data):
 
 # --- ORDER FUNCTIONS (adapted to use APIClient) ---
 async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
-    global ACCOUNT_ID # Make sure global ACCOUNT_ID is used if alert.account_id is not present
+    global ACCOUNT_ID 
     if not api_client: 
         raise TopstepAPIError("APIClient not initialized")
     
     order_account_id = alert.account_id if alert.account_id else ACCOUNT_ID
-    if not order_account_id: # Final check if account_id is resolved
+    if not order_account_id:
         raise ValueError("Account ID is missing: not globally configured and not in alert.")
     
     order_contract_id = alert.ticker or strategy_cfg.get("PROJECTX_CONTRACT_ID")
@@ -495,25 +496,27 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
 
     order_quantity = alert.quantity if alert.quantity is not None else strategy_cfg.get("TRADE_SIZE", 1)
     
+    # Convert side string to integer
     side_str = alert.signal.lower()
-    order_side_enum: OrderSide
+    order_side_int: int
     if side_str == "long" or side_str == "buy":
-        order_side_enum = OrderSide.Bid
+        order_side_int = OrderSide.Bid.value
     elif side_str == "short" or side_str == "sell":
-        order_side_enum = OrderSide.Ask
+        order_side_int = OrderSide.Ask.value
     else:
         raise ValueError(f"Invalid signal/side from webhook: {alert.signal}")
 
+    # Convert order_type string to integer
     order_type_str = alert.order_type.lower()
-    order_type_enum: OrderType
+    order_type_int: int
     if order_type_str == "market":
-        order_type_enum = OrderType.Market
+        order_type_int = OrderType.Market.value
     elif order_type_str == "limit":
-        order_type_enum = OrderType.Limit
+        order_type_int = OrderType.Limit.value
     elif order_type_str == "stop": 
-        order_type_enum = OrderType.Stop 
+        order_type_int = OrderType.Stop.value 
     elif order_type_str == "trailingstop":
-        order_type_enum = OrderType.TrailingStop 
+        order_type_int = OrderType.TrailingStop.value 
     else:
         logger.error(f"Unknown order type from webhook: {alert.order_type}")
         raise ValueError(f"Unknown order type from webhook: {alert.order_type}")
@@ -521,35 +524,29 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
     pydantic_request_params = {
         "account_id": order_account_id,
         "contract_id": order_contract_id,
-        "size": order_quantity,  # Corrected from "qty"
-        "side": order_side_enum, 
-        "type": order_type_enum, 
-        "limit_price": alert.limit_price, # Will be None if not provided by alert
-        "stop_price": alert.stop_price    # Will be None if not provided by alert
+        "size": order_quantity,
+        "side": order_side_int, # Use integer
+        "type": order_type_int,  # Use integer
+        "limit_price": alert.limit_price, 
+        "stop_price": alert.stop_price    
     }
 
-    if order_type_enum == OrderType.Limit:
-        if alert.limit_price is None: # Ensure limit_price is provided for limit orders
+    if order_type_int == OrderType.Limit.value:
+        if alert.limit_price is None:
             raise ValueError("limit_price is required for a limit order.")
-    elif order_type_enum == OrderType.Stop: 
-        if alert.stop_price is None: # Ensure stop_price is provided for stop orders
+    elif order_type_int == OrderType.Stop.value: 
+        if alert.stop_price is None:
             raise ValueError("stop_price is required for a stop order.")
-    elif order_type_enum == OrderType.TrailingStop:
-        if alert.trailingDistance is None or alert.trailingDistance <= 0: # trailingDistance from SignalAlert model
-            raise ValueError("trailingDistance (as price offset) required and must be positive for TrailingStop.")
-        # Assuming alert.trailingDistance is the direct price offset value the API expects for trail_price.
-        # If conversion (e.g., from ticks to price) is needed, it must happen here.
-        pydantic_request_params["trail_price"] = alert.trailingDistance ,
-        # If trailing from market, stop_price might be explicitly set to None.
-        # If API expects stop_price as a base for TrailingStop, ensure alert.stop_price is used or logic exists.
-        if alert.stop_price is None: # Example: if trailing from market, ensure no old stop_price is carried
+    elif order_type_int == OrderType.TrailingStop.value:
+        if alert.trailingDistance is None or alert.trailingDistance <= 0:
+            raise ValueError("trailing_distance (as price offset) required and must be positive for TrailingStop.")
+        pydantic_request_params["trail_price"] = alert.trailingDistance 
+        if alert.stop_price is None: 
              pydantic_request_params["stop_price"] = None
     
-    # Clean out any None values from optional parameters before creating the final request model
     final_params_for_request = {k: v for k, v in pydantic_request_params.items() if v is not None}
 
     logger.info(f"[Order Attempt] Constructing PlaceOrderRequest with: {final_params_for_request}")
-    # OrderRequest is an alias for PlaceOrderRequest in main.py context
     order_req = OrderRequest(**final_params_for_request) 
 
     try:
@@ -562,46 +559,44 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
             error_code_val = result.error_code.value if result and result.error_code else "N/A"
             logger.error(f"Order placement failed: {err_msg} (Code: {error_code_val}). API Response: {result.dict(by_alias=True) if result else 'No response object'}")
             return {"success": False, "errorMessage": err_msg, "details": result.dict(by_alias=True) if result else None}
-    except Exception as e: # Catch any exception from api_client.place_order or Pydantic validation
+    except Exception as e:
         logger.error(f"❌ Unexpected exception during order placement: {str(e)}", exc_info=True)
-        # Return a structured error that the calling endpoint can process
         return {"success": False, "errorMessage": str(e), "details": None}
 
-async def close_position_projectx(strategy_cfg: dict, current_active_signal: str, target_account_id: int):
-    if not api_client: raise TopstepAPIError("APIClient not initialized")
+async def close_position_projectx(strategy_cfg: dict, current_active_signal_direction: str, target_account_id: int, size_to_close: int):
+    if not api_client: 
+        raise TopstepAPIError("APIClient not initialized")
+    if not target_account_id: 
+        raise ValueError("Target Account ID not provided for closing position.")
 
-    # Determine side for closing order
-    close_side_str = "Sell" if current_active_signal == "long" else "Buy"
-    close_side_numeric = 0 if close_side_str == "Buy" else 1 # 0 for Buy, 1 for Sell
+    # Convert side string to integer
+    order_side_int: int
+    if current_active_signal_direction == "long":
+        order_side_int = OrderSide.Ask.value # To close a long, we sell (Ask)
+    else: # direction is "short"
+        order_side_int = OrderSide.Bid.value  # To close a short, we buy (Bid)
+        
+    contract_id = strategy_cfg.get("PROJECTX_CONTRACT_ID")
+    if not contract_id: 
+        raise ValueError(f"PROJECTX_CONTRACT_ID not found for strategy.")
 
-    if "PROJECTX_CONTRACT_ID" not in strategy_cfg:
-         raise ValueError(f"PROJECTX_CONTRACT_ID not found for symbol {strategy_cfg.get('CONTRACT_SYMBOL', 'N/A')}")
-
-    # This endpoint /api/Position/closeContract was specific.
-    # Standard way is to place an opposing market order.
-    # If the API supports a specific "close position" endpoint, that would be called via api_client.
-    # For now, assuming placing an opposing market order for the full size of the trade.
-    # The quantity might need to be fetched from current position state if not closing full initial size.
     order_req = OrderRequest(
-        accountId=target_account_id,
-        contractId=strategy_cfg["PROJECTX_CONTRACT_ID"],
-        qty=strategy_cfg["TRADE_SIZE"], # Assuming full close of original trade size
-        side=close_side_numeric,
-        type=2  # Market order type code for closing
+        account_id=target_account_id, 
+        contract_id=contract_id,
+        size=size_to_close, 
+        side=order_side_int,    # Use integer
+        type=OrderType.Market.value # Use integer
     )
-    log_event(ALERT_LOG_PATH, {"event": "Closing Position Attempt", "strategy": current_strategy_name, "payload": order_req.dict(by_alias=True)})
+    log_event(ALERT_LOG_PATH, {"event": "Closing Position Attempt", "strategy": strategy_cfg.get("CONTRACT_SYMBOL","N/A"), "payload": order_req.dict(by_alias=True)})
     try:
         response: PlaceOrderResponse = await api_client.place_order(order_req)
-        if response and response.success and response.order_id is not None:
-            logger.info(f"Close position order placed: {response.order_id}, Success: {response.success}")
+        if response.success and response.order_id is not None:
+            logger.info(f"Close position order placed: {response.order_id}")
             return {"success": True, "orderId": response.order_id}
         else:
-            err_msg = response.error_message if response else "Close position order failed to return valid order details."
-            logger.error(f"❌ Close position order failed. API Response: {response.dict(by_alias=True) if response else 'No response object'}")
-            return {"success": False, "errorMessage": err_msg, "details": response.dict(by_alias=True) if response else None}
-    except APIRequestError as e:
-        logger.error(f"Failed to close position via API: {e.message if hasattr(e, 'message') else e}")
-        return {"success": False, "errorMessage": str(e.message if hasattr(e, 'message') else e)}
+            err = response.error_message or "Close position order failed."
+            logger.error(f"❌ Close position order failed: {err}. API Response: {response.dict(by_alias=True)}")
+            return {"success": False, "errorMessage": err, "details": response.dict(by_alias=True)}
     except Exception as e:
         logger.error(f"Unexpected error closing position: {e}", exc_info=True)
         return {"success": False, "errorMessage": str(e)}
@@ -942,25 +937,20 @@ async def post_manual_market_order(params: ManualTradeParams, background_tasks: 
     
     logger.info(f"[Manual Trade] Received market order request: {params.dict(by_alias=True)}")
 
-    side_enum: OrderSide
+    order_side_int: int
     if params.side.lower() == "long":
-        side_enum = OrderSide.Bid
+        order_side_int = OrderSide.Bid.value
     elif params.side.lower() == "short":
-        side_enum = OrderSide.Ask
+        order_side_int = OrderSide.Ask.value
     else:
         return {"success": False, "message": f"Invalid side parameter: {params.side}. Expected 'long' or 'short'."}
 
-    # OrderRequest is an alias for schemas.PlaceOrderRequest
-    # Corrected:
-    # 1. 'size=params.size' (from 'quantity')
-    # 2. 'side=side_enum' (using the derived enum)
-    # 3. 'type=OrderType.Market.value' (using the enum value)
     order_req = OrderRequest(
         account_id=params.account_id,
         contract_id=params.contract_id,
-        size=params.size,  # Corrected
-        side=side_enum,    # Corrected
-        type=OrderType.Market.value  # Corrected
+        size=params.size,
+        side=order_side_int,    # Use integer
+        type=OrderType.Market.value  # Use integer
     )
 
     try:
@@ -969,10 +959,7 @@ async def post_manual_market_order(params: ManualTradeParams, background_tasks: 
             msg = f"Market order placed successfully. Order ID: {result_details.order_id}, Success: {result_details.success}"
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_market_order_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
-
             background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id)
-            logger.info(f"Scheduled MarketDataStream check/start for contract {params.contract_id} in background.")
-
             return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
         else:
             err_msg = result_details.error_message if result_details else "Market order placement failed or no order ID returned."
@@ -991,25 +978,24 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
     
     logger.info(f"[Manual Trade] Received trailing stop order request: {params.dict(by_alias=True)}")
 
-    if params.trailingDistance is None or params.trailingDistance <= 0: # trailing_distance from ManualTradeParams
+    if params.trailing_distance is None or params.trailing_distance <= 0:
         return {"success": False, "message": "Trailing distance must be a positive value for a trailing stop order."}
 
-    side_enum: OrderSide # Explicitly type hint for clarity
+    order_side_int: int
     if params.side.lower() == "long":
-        side_enum = OrderSide.Bid
+        order_side_int = OrderSide.Bid.value
     elif params.side.lower() == "short":
-        side_enum = OrderSide.Ask
+        order_side_int = OrderSide.Ask.value
     else:
         return {"success": False, "message": f"Invalid side parameter: {params.side}. Expected 'long' or 'short'."}
 
-    # OrderRequest is an alias for schemas.PlaceOrderRequest
     order_req = OrderRequest( 
         account_id=params.account_id,
         contract_id=params.contract_id,
-        size=params.size,  # Corrected from quantity
-        side=side_enum,
-        type=OrderType.TrailingStop.value, # Use enum value
-        trail_price=params.trailingDistance # Assuming params.trailingDistance is the price offset
+        size=params.size,
+        side=order_side_int, # Use integer
+        type=OrderType.TrailingStop.value, # Use integer
+        trail_price=params.trailing_distance 
     )
 
     try:
@@ -1018,7 +1004,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
             msg = f"Trailing stop order placed successfully. Order ID: {result_details.order_id}, Success: {result_details.success}"
             logger.info(f"[Manual Trade] {msg}")
             log_event(TRADE_LOG_PATH, {"event": "manual_trailing_stop_placed", "params": params.dict(by_alias=True), "result": result_details.dict(by_alias=True)})
-            background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id) # Ensure this function exists and is imported if needed
+            background_tasks.add_task(ensure_market_stream_for_contract, params.contract_id)
             return {"success": True, "message": msg, "details": result_details.dict(by_alias=True)}
         else:
             err_msg = result_details.error_message if result_details else "Trailing stop order placement failed or no order ID returned."
@@ -1072,42 +1058,44 @@ async def post_manual_cancel_all_orders(params: AccountActionParams):
         log_event(ALERT_LOG_PATH, {"event": "manual_cancel_all_exception", "params": params.dict(by_alias=True), "error": str(e)})
         return {"success": False, "message": f"An exception occurred: {str(e)}"}
 
-@app.post("/manual/flatten_all_trades", summary="Flatten all open positions for an account (Simulated)")
+@app.post("/manual/flatten_all_trades", summary="Flatten all open positions for an account")
 async def post_manual_flatten_all_trades(params: AccountActionParams):
-    if not api_client:
+    if not api_client: 
         return {"success": False, "message": "APIClient not initialized."}
-
+    
     logger.info(f"[Manual Action] Received Flatten All Trades request for account: {params.account_id}")
     flattened_count = 0
     errors = []
-
     try:
-        # In a real implementation, get_positions would fetch from the API.
-        # Here, it uses the simulated version which currently returns [].
         positions = await api_client.get_positions(params.account_id)
-
         if not positions:
-            logger.info(f"[Manual Action] No open positions found to flatten for account {params.account_id} (or simulation returned empty).")
-            return {"success": True, "message": "No open positions found to flatten (or simulation returned empty).", "flattened_count": 0, "errors": []}
-
-        for pos in positions:
+            logger.info(f"[Manual Action] No open positions found to flatten for account {params.account_id}.")
+            return {"success": True, "message": "No open positions found.", "flattened_count": 0, "errors": []}
+        
+        for pos in positions: 
             try:
-                # Determine opposing side
-                opposing_side = "sell" if pos.side.lower() in ["long", "buy"] else "buy"
-
-                # Create a market order to close the position
+                opposing_side_int: int
+                if pos.type == PositionType.Long: 
+                    opposing_side_int = OrderSide.Ask.value # Sell to close long
+                elif pos.type == PositionType.Short:
+                    opposing_side_int = OrderSide.Bid.value  # Buy to close short
+                else:
+                    logger.warning(f"[Manual Action] Unknown position type for position ID {pos.id}: {pos.type}. Skipping.")
+                    errors.append(f"Unknown position type for {pos.contract_id}")
+                    continue
+                
                 order_req = OrderRequest(
-                    account_id=pos.account_id,
+                    account_id=pos.account_id, 
                     contract_id=pos.contract_id,
-                    qty=abs(int(pos.quantity)), # Ensure qty is positive integer
-                    side=0 if opposing_side == "buy" else 1, # 0 for Buy, 1 for Sell
-                    type=2 # Market order
+                    size=abs(int(pos.size)), 
+                    side=opposing_side_int,    # Use integer
+                    type=OrderType.Market.value # Use integer
                 )
-                logger.info(f"[Manual Action] Attempting to flatten position for {pos.contract_id} (Qty: {pos.quantity}, Side: {pos.side}) with order: {order_req.dict(by_alias=True)}")
+                logger.info(f"[Manual Action] Attempting to flatten position for {pos.contract_id} (Qty: {pos.size}, Side: {pos.type.name}) with order: {order_req.dict(by_alias=True)}")
 
                 result_details: PlaceOrderResponse = await api_client.place_order(order_req)
                 if result_details and result_details.success and result_details.order_id is not None:
-                    logger.info(f"[Manual Action] Flatten order for {pos.contract_id} placed. Order ID: {result_details.order_id}, Success: {result_details.success}")
+                    logger.info(f"[Manual Action] Flatten order for {pos.contract_id} placed. Order ID: {result_details.order_id}")
                     flattened_count += 1
                 else:
                     err_msg = result_details.error_message if result_details else f"Failed to place flatten order for {pos.contract_id}."
@@ -1120,7 +1108,6 @@ async def post_manual_flatten_all_trades(params: AccountActionParams):
         msg = f"Flatten All Trades for account {params.account_id} processed. Flatten orders placed: {flattened_count}. Errors: {len(errors)}."
         log_event(ALERT_LOG_PATH, {"event": "manual_flatten_all_processed", "params": params.dict(by_alias=True), "flattened_count": flattened_count, "errors": errors})
         return {"success": True, "message": msg, "flattened_count": flattened_count, "errors": errors}
-
     except Exception as e:
         logger.error(f"[Manual Action] Exception in Flatten All Trades for account {params.account_id}: {e}", exc_info=True)
         log_event(ALERT_LOG_PATH, {"event": "manual_flatten_all_exception", "params": params.dict(by_alias=True), "error": str(e)})
