@@ -62,3 +62,25 @@ def test_import_order_side_from_topstep_client():
 
     assert OrderSide.Bid == 0
     assert OrderSide.Ask == 1
+
+
+def test_import_order_type_from_topstep_client():
+    from topstep_client import OrderType
+
+    assert OrderType.Market == 2
+    assert OrderType.Limit == 1
+
+
+def test_import_position_type_from_topstep_client():
+    from topstep_client import PositionType
+
+    assert PositionType.Long == 1
+    assert PositionType.Short == 2
+
+
+def test_import_position_model_from_topstep_client():
+    from topstep_client import PositionModel
+    from pydantic import BaseModel
+
+    assert PositionModel is not None
+    assert issubclass(PositionModel, BaseModel)
