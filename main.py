@@ -403,7 +403,7 @@ class ManualTradeParams(BaseModel):
     contract_id: str = Field(..., alias="contractId")
     side: str  # Expected "long" or "short"
     size: int
-    trailingDistance: Optional[int] = Field(default=None, alias="trailingStopTicks")
+    trailingDistance: Optional[int] = Field(default=None, alias="trailingDistance")
     # limit_price: Optional[float] = Field(default=None, alias="limitPrice") # Add if limit orders are also needed from this form
 
 class AccountActionParams(BaseModel):
@@ -1484,8 +1484,8 @@ async def manual_trade_page():
                     <label for="size">Size (Contracts):</label>
                     <input type="number" id="size" name="size" min="1" value="1" required>
 
-                    <label for="trailingStopTicks">Trailing Stop (Ticks, for Trailing Stop Order):</label>
-                    <input type="number" id="trailingStopTicks" name="trailingStopTicks" min="0">
+                    <label for="trailingDistance">Trailing Stop (Ticks, for Trailing Stop Order):</label>
+                    <input type="number" id="trailingDistance" name="trailingDistance" min="0">
                 </div>
             </form>
 
@@ -1510,14 +1510,14 @@ async def manual_trade_page():
                     contractId: form.elements.contractId.value,
                     side: form.elements.side.value,
                     size: parseInt(form.elements.size.value),
-                    trailingStopTicks: form.elements.trailingStopTicks.value ? parseInt(form.elements.trailingStopTicks.value) : null
+                    trailingDistance: form.elements.trailingDistance.value ? parseInt(form.elements.trailingDistance.value) : null
                 }};
 
                 if (!formData.accountId || !formData.contractId || !formData.side || !formData.size) {{
                     responseArea.textContent = "Error: Account ID, Contract ID, Side, and Size are required.";
                     return;
                 }}
-                if (orderType === 'trailing_stop' && (!formData.trailingStopTicks || formData.trailingStopTicks <= 0)) {{
+                if (orderType === 'trailing_stop' && (!formData.trailingDistance || formData.trailingDistance <= 0)) {{
                     responseArea.textContent = "Error: Trailing Stop Ticks must be a positive number for a trailing stop order.";
                     return;
                 }}
