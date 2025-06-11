@@ -537,15 +537,12 @@ async def place_order_projectx(alert: SignalAlert, strategy_cfg: dict):
         if alert.stop_price is None:
             raise ValueError("stop_price is required for a stop order.")
         pydantic_request_params["stop_price"] = alert.stop_price
-    # market type (2) doesn't need extra params here.
-    # Other types like stop-limit (4) would need more handling.
 
     logger.info(f"[Order Attempt] Constructing OrderRequest with: {pydantic_request_params}")
     order_req = OrderRequest(**pydantic_request_params)
 
     try:
         result_details: PlaceOrderResponse = await api_client.place_order(order_req)
-        # Ensure result_details itself is not None before accessing attributes
         if result_details and result_details.success and result_details.order_id is not None:
             logger.info(f"✅ Order placed successfully via APIClient. Order ID: {result_details.order_id}, Success: {result_details.success}")
             return {"success": True, "orderId": result_details.order_id, "details": result_details.dict(by_alias=True)}
@@ -1510,7 +1507,7 @@ async def manual_trade_page():
                     contractId: form.elements.contractId.value,
                     side: form.elements.side.value,
                     size: parseInt(form.elements.size.value),
-                    trailingDistance: form.elements.trailingDistance.value ? parseInt(form.elements.trailingDistance.value) : null
+                    trailingDistance: parseInt(form.elements.trailingDistance.value) : null
                 }};
 
                 if (!formData.accountId || !formData.contractId || !formData.side || !formData.size) {{
