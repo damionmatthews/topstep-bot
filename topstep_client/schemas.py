@@ -39,7 +39,7 @@ class OrderRequest(BaseSchema):
     quantity: int = Field(..., alias='size')
     side: int # Changed
     type: int # Changed
-    trailing_distance: Optional[int] = Field(default=None, alias="trailingStopTicks")
+    trailing_distance: Optional[int] = Field(default=None, alias="trailDistance")
     limit_price: Optional[float] = Field(default=None, alias='limitPrice')
     stop_price: Optional[float] = Field(default=None, alias='stopPrice')
     # Add other relevant fields like time_in_force, etc.
