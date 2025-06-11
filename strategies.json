@@ -1,0 +1,11 @@
+{
+  "default": {
+    "MAX_DAILY_LOSS": -1200,
+    "MAX_DAILY_PROFIT": 2000,
+    "MAX_TRADE_LOSS": -160,
+    "MAX_TRADE_PROFIT": 90,
+    "CONTRACT_SYMBOL": "NQ",
+    "PROJECTX_CONTRACT_ID": "CON.F.US.ENQ.M25",
+    "TRADE_SIZE": 1
+  }
+}
