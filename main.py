@@ -403,7 +403,7 @@ class ManualTradeParams(BaseModel):
     contract_id: str = Field(..., alias="contractId")
     side: str  # Expected "long" or "short"
     size: int
-    trailing_stop_ticks: Optional[int] = Field(default=None, alias="trailingStopTicks")
+    trailingDistance: Optional[int] = Field(default=None, alias="trailingStopTicks")
     # limit_price: Optional[float] = Field(default=None, alias="limitPrice") # Add if limit orders are also needed from this form
 
 class AccountActionParams(BaseModel):
@@ -977,7 +977,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
 
     logger.info(f"[Manual Trade] Received trailing stop order request: {params.dict(by_alias=True)}")
 
-    if params.trailing_stop_ticks is None or params.trailing_stop_ticks <= 0:
+    if params.trailingDistance is None or params.trailingDistance <= 0:
         return {"success": False, "message": "Trailing stop ticks must be a positive integer."}
 
     order_side_numeric = 0 if params.side.lower() == "long" else 1 # 0 for Buy, 1 for Sell
@@ -988,7 +988,7 @@ async def post_manual_trailing_stop_order(params: ManualTradeParams, background_
         quantity=params.size,
         side=order_side_numeric,
         type=5,  # TrailingStop order type code
-        trailing_distance=params.trailing_stop_ticks
+        trailing_distance=params.trailingDistance
     )
 
     try:
