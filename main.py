@@ -1507,7 +1507,7 @@ async def manual_trade_page():
                     contractId: form.elements.contractId.value,
                     side: form.elements.side.value,
                     size: parseInt(form.elements.size.value),
-                    trailingDistance: parseInt(form.elements.trailingDistance.value) : null
+                    trailingDistance: form.elements.trailingDistance.value ? parseInt(form.elements.trailingDistance.value) : null
                 }};
 
                 if (!formData.accountId || !formData.contractId || !formData.side || !formData.size) {{
