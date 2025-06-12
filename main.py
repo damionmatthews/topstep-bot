@@ -106,6 +106,14 @@ async def initialize_topstep_client():
 
         # Attempt to set a default ACCOUNT_ID from fetched accounts
         try:
+            # ADDED DEBUGGING LINES:
+            logger.info(f"DEBUG: Before get_accounts: type(api_client) = {type(api_client)}")
+            logger.info(f"DEBUG: Before get_accounts: dir(api_client) = {dir(api_client)}")
+            # Check if get_accounts is present just before calling it
+            if hasattr(api_client, 'get_accounts'):
+                logger.info("DEBUG: 'get_accounts' attribute IS present in api_client.")
+            else:
+                logger.error("DEBUG: 'get_accounts' attribute IS MISSING from api_client just before call!")
             accs = await api_client.get_accounts() # Uses TradingAccountModel
             if accs:
                 ACCOUNT_ID = accs[0].id # Use the first account's ID
@@ -113,7 +121,7 @@ async def initialize_topstep_client():
             else:
                 logger.warning("No accounts found for the user. Global ACCOUNT_ID remains as initially set or default.")
         except Exception as e:
-            logger.error(f"Failed to get accounts to set default ACCOUNT_ID: {e}")
+            logger.error(f"Failed to get accounts to set default ACCOUNT_ID: {e}", exc_info=True) # Ensure exc_info=True
 
 
         market_stream = MarketDataStream(api_client, on_state_change_callback=handle_market_stream_state_change, on_trade_callback=handle_market_trade_event, on_quote_callback=handle_market_quote_event, on_depth_callback=handle_market_depth_event, debug=True)
