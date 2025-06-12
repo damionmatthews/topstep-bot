@@ -98,6 +98,12 @@ user_stream: Optional[UserHubStream] = None
 async def initialize_topstep_client():
     global api_client, market_stream, user_stream, SESSION_TOKEN, ACCOUNT_ID
     logger.info("Initializing Topstep Client...")
+    logger.info(f"DEBUG: Before get_accounts: type(api_client) = {type(api_client)}")
+    logger.info(f"DEBUG: Before get_accounts: dir(api_client) = {dir(api_client)}")
+        if hasattr(api_client, 'get_accounts'):
+    logger.info("DEBUG: 'get_accounts' attribute IS present in api_client.")
+        else:
+    logger.error("DEBUG: 'get_accounts' attribute IS MISSING from api_client just before call!")
     try:
         api_client = APIClient() # Uses env vars TOPSTEP_USERNAME, TOPSTEP_API_KEY
         await api_client.authenticate()
@@ -121,8 +127,8 @@ async def initialize_topstep_client():
             else:
                 logger.warning("No accounts found for the user. Global ACCOUNT_ID remains as initially set or default.")
         except Exception as e:
-            logger.error(f"Failed to get accounts to set default ACCOUNT_ID: {e}", exc_info=True) # Ensure exc_info=True
 
+            logger.error(f"Failed to get accounts to set default ACCOUNT_ID: {e}", exc_info=True) # Ensure exc_info=True
 
         market_stream = MarketDataStream(api_client, on_state_change_callback=handle_market_stream_state_change, on_trade_callback=handle_market_trade_event, on_quote_callback=handle_market_quote_event, on_depth_callback=handle_market_depth_event, debug=True)
         user_stream = UserHubStream(api_client, on_state_change_callback=handle_user_stream_state_change, on_user_trade_callback=handle_user_trade_event_from_stream, on_user_order_callback=handle_user_order_event_from_stream, on_user_position_callback=handle_user_position_event_from_stream, debug=True)
@@ -131,7 +137,7 @@ async def initialize_topstep_client():
     except AuthenticationError as e:
         logger.error(f"Client Authentication Error: {e}")
     except Exception as e:
-        logger.error(f"Failed to initialize Topstep Client: {e}", exc_info=True)
+        logger.error(f"Failed to initialize Topstep Client: {e}", exc_info=True) 
 
 async def start_streams_if_needed():
     global market_stream, user_stream, api_client, ACCOUNT_ID # Ensure ACCOUNT_ID is available
